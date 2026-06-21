@@ -13,7 +13,10 @@ import (
 const (
 	tabBarHeight = 2 // tab labels + bottom border
 	footerHeight = 1
-	previewRatio = 40 // percent of width given to the preview pane
+	// Percent of width given to the preview pane. Two-line list rows give the
+	// title its own line, so the list column can be narrower and the preview
+	// gets the larger share.
+	previewRatio = 50
 )
 
 // Model is agenda's root Bubble Tea model: chrome around a set of views.

@@ -179,54 +179,25 @@ func (p pr) commentsCell() string {
 // both lines (rather than a full-row background, which lipgloss's per-segment
 // resets would clobber).
 func (p pr) Render(width int, selected bool) string {
-	bar := "  "
-	if selected {
-		bar = fg("13").Render("▌") + " "
-	}
-	status := p.stateIcon() + " " + p.ciIcon() + " " + p.reviewIcon()
-	prefix := bar + status + "  "
-	indent := lipgloss.Width(prefix)
+	glyphs := p.stateIcon() + " " + p.ciIcon() + " " + p.reviewIcon()
 
-	// Right cluster on line one: diff · comments · age.
+	// Right cluster: diff · comments · age.
 	right := strings.TrimSpace(p.diffCell() + "  " + p.commentsCell() + "  " + grey.Render(ui.Age(p.UpdatedAt)))
 
-	// Left metadata on line one: repo #num · @author · branch. Built in plain
-	// form first so it can be truncated without cutting through ANSI codes.
+	// Metadata: repo #num · @author · branch (plain for measurement/truncation,
+	// styled for display).
 	plain := fmt.Sprintf("%s #%d", p.repo(), p.Number)
+	styled := cyan.Render(p.repo()) + yellow.Render(fmt.Sprintf(" #%d", p.Number))
 	if p.Author.Login != "" {
 		plain += " · @" + p.Author.Login
+		styled += grey.Render(" · @" + p.Author.Login)
 	}
 	if p.HeadRefName != "" {
 		plain += " · " + p.HeadRefName
+		styled += grey.Render(" · " + p.HeadRefName)
 	}
 
-	avail := max(1, width-indent-lipgloss.Width(right)-1)
-	var meta string
-	if lipgloss.Width(plain) <= avail {
-		meta = cyan.Render(p.repo()) + yellow.Render(fmt.Sprintf(" #%d", p.Number))
-		if p.Author.Login != "" {
-			meta += grey.Render(" · @" + p.Author.Login)
-		}
-		if p.HeadRefName != "" {
-			meta += grey.Render(" · " + p.HeadRefName)
-		}
-	} else {
-		meta = grey.Render(ui.Truncate(plain, avail))
-	}
-
-	gap := max(1, width-indent-lipgloss.Width(meta)-lipgloss.Width(right))
-	line1 := prefix + meta + strings.Repeat(" ", gap) + right
-
-	titleW := max(1, width-indent)
-	title := ui.Truncate(p.Title, titleW)
-	if selected {
-		title = bold.Render(title)
-	} else {
-		title = lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Render(title)
-	}
-	line2 := bar + strings.Repeat(" ", indent-lipgloss.Width(bar)) + title
-
-	return line1 + "\n" + line2
+	return ui.TwoLineRow(width, selected, glyphs, plain, styled, right, p.Title)
 }
 
 // --- messages ---------------------------------------------------------------

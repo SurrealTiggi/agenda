@@ -43,10 +43,6 @@ var (
 	faint  = lipgloss.NewStyle().Faint(true)
 )
 
-func col(s string, w int) string {
-	return lipgloss.NewStyle().Width(w).MaxWidth(w).Render(s)
-}
-
 // hexColor returns a lipgloss style whose foreground is the given Linear hex
 // color (which may or may not include a leading '#'), falling back to grey.
 func hexStyle(hex string) lipgloss.Style {
@@ -114,22 +110,19 @@ func (i issue) priorityCell() string {
 }
 
 func (i issue) Render(width int, selected bool) string {
-	bar := "  "
-	if selected {
-		bar = fg("13").Render("▌") + " "
-	}
-	left := bar +
-		col(i.priorityCell(), 1) + " " +
-		col(hexStyle(i.State.Color).Render(ui.Truncate(i.State.Name, 13)), 13) + " " +
-		col(cyan.Render(i.Identifier), 10) + " " +
-		col(grey.Render(ui.Age(i.UpdatedAt)), 4) + " "
+	glyphs := i.priorityCell()
 
-	titleW := max(1, width-lipgloss.Width(left))
-	title := ui.Truncate(i.Title, titleW)
-	if selected {
-		title = bold.Render(title)
+	// Metadata: state · identifier (· project).
+	plain := i.State.Name + "  " + i.Identifier
+	styled := hexStyle(i.State.Color).Render(i.State.Name) + "  " + cyan.Render(i.Identifier)
+	if i.Project.Name != "" {
+		plain += " · " + i.Project.Name
+		styled += grey.Render(" · " + i.Project.Name)
 	}
-	return left + title
+
+	right := grey.Render(ui.Age(i.UpdatedAt))
+
+	return ui.TwoLineRow(width, selected, glyphs, plain, styled, right, i.Title)
 }
 
 // --- messages ---------------------------------------------------------------
@@ -161,7 +154,7 @@ type viewKeys struct {
 }
 
 func New(token string) *View {
-	return &View{
+	v := &View{
 		token:   token,
 		list:    ui.NewList[issue](),
 		loading: token != "",
@@ -171,6 +164,8 @@ func New(token string) *View {
 			Branch: key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "copy branch")),
 		},
 	}
+	v.list.SetRowHeight(2) // two-line rows: state/identifier + title
+	return v
 }
 
 func (v *View) Title() string { return "Linear" }

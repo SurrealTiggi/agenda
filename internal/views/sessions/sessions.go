@@ -30,13 +30,8 @@ var (
 	cyan    = fg("6")
 	yellow  = fg("3")
 	grey    = fg("8")
-	bold    = lipgloss.NewStyle().Bold(true)
 	faint   = lipgloss.NewStyle().Faint(true)
 )
-
-func col(s string, w int) string {
-	return lipgloss.NewStyle().Width(w).MaxWidth(w).Render(s)
-}
 
 func (s session) toolStyle() lipgloss.Style {
 	switch s.Tool {
@@ -61,22 +56,13 @@ func (s session) Filter() string {
 }
 
 func (s session) Render(width int, selected bool) string {
-	bar := "  "
-	if selected {
-		bar = fg("13").Render("▌") + " "
-	}
-	left := bar +
-		col(s.toolStyle().Render(string(s.Tool)), 7) + " " +
-		col(grey.Render(ui.Age(s.MTime)), 4) + " " +
-		col(yellow.Render(strconv.Itoa(s.Msgs)), 4) + " " +
-		col(cyan.Render(ui.Truncate(shortenPath(s.Cwd), 30)), 30) + " "
+	// Glyph column: the tool badge, padded to a fixed width so titles align.
+	glyphs := s.toolStyle().Render(fmt.Sprintf("%-6s", s.Tool))
 
-	titleW := max(1, width-lipgloss.Width(left))
-	title := ui.Truncate(s.titleOr(), titleW)
-	if selected {
-		title = bold.Render(title)
-	}
-	return left + title
+	cwd := shortenPath(s.Cwd)
+	right := yellow.Render(strconv.Itoa(s.Msgs)) + "  " + grey.Render(ui.Age(s.MTime))
+
+	return ui.TwoLineRow(width, selected, glyphs, cwd, cyan.Render(cwd), right, s.titleOr())
 }
 
 // --- sorting ----------------------------------------------------------------
@@ -149,7 +135,7 @@ type viewKeys struct {
 }
 
 func New() *View {
-	return &View{
+	v := &View{
 		list:    ui.NewList[session](),
 		loading: true,
 		keys: viewKeys{
@@ -157,6 +143,8 @@ func New() *View {
 			Sort:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 		},
 	}
+	v.list.SetRowHeight(2) // two-line rows: cwd + title
+	return v
 }
 
 func (v *View) Title() string { return "Sessions" }
