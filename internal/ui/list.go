@@ -93,11 +93,18 @@ func (l *List[T]) SetItems(items []T) {
 	l.applyFilter()
 
 	if hadPrev {
+		found := false
 		for i, idx := range l.filtered {
 			if l.items[idx].Filter() == prevKey {
 				l.cursor = i
+				found = true
 				break
 			}
+		}
+		// If the previously-selected item is gone, jump to the top rather than
+		// leaving the cursor on whatever now sits at the old index.
+		if !found {
+			l.cursor = 0
 		}
 	}
 	l.clampCursor()
