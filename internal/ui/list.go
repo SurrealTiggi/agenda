@@ -29,6 +29,7 @@ type List[T Item] struct {
 	offset   int   // first visible row (index into filtered)
 
 	width, height int
+	rowHeight     int // lines per item (default 1); set higher for multi-line rows
 
 	filtering bool
 	query     string
@@ -54,7 +55,27 @@ func defaultListKeys() listKeys {
 }
 
 func NewList[T Item]() List[T] {
-	return List[T]{keys: defaultListKeys()}
+	return List[T]{keys: defaultListKeys(), rowHeight: 1}
+}
+
+// SetRowHeight declares how many lines each item's Render produces, so the
+// list's scrolling and windowing account for multi-line rows. Items must
+// render exactly this many lines.
+func (l *List[T]) SetRowHeight(h int) {
+	if h < 1 {
+		h = 1
+	}
+	l.rowHeight = h
+	l.clampCursor()
+}
+
+// visibleItems is how many items fit in the current height.
+func (l *List[T]) visibleItems() int {
+	rh := l.rowHeight
+	if rh < 1 {
+		rh = 1
+	}
+	return max(1, l.height/rh)
 }
 
 // SetItems replaces the contents, preserving the selected item by identity of
@@ -145,9 +166,9 @@ func (l *List[T]) Update(msg tea.Msg) (consumed bool, cmd tea.Cmd) {
 	case key.Matches(km, l.keys.Down):
 		l.move(1)
 	case key.Matches(km, l.keys.HalfUp):
-		l.move(-l.height / 2)
+		l.move(-l.visibleItems() / 2)
 	case key.Matches(km, l.keys.HalfDown):
-		l.move(l.height / 2)
+		l.move(l.visibleItems() / 2)
 	case key.Matches(km, l.keys.Top):
 		l.cursor = 0
 	case key.Matches(km, l.keys.Bottom):
@@ -174,12 +195,13 @@ func (l *List[T]) clampCursor() {
 		return
 	}
 	l.cursor = clamp(l.cursor, 0, len(l.filtered)-1)
-	// Keep the cursor within the visible window.
+	// Keep the cursor within the visible window (measured in items).
+	win := l.visibleItems()
 	if l.cursor < l.offset {
 		l.offset = l.cursor
 	}
-	if l.height > 0 && l.cursor >= l.offset+l.height {
-		l.offset = l.cursor - l.height + 1
+	if l.cursor >= l.offset+win {
+		l.offset = l.cursor - win + 1
 	}
 	l.offset = clamp(l.offset, 0, max(0, len(l.filtered)-1))
 }
@@ -204,10 +226,12 @@ func (l *List[T]) View() string {
 		return lipgloss.NewStyle().Faint(true).Render(empty)
 	}
 
-	end := min(l.offset+l.height, len(l.filtered))
+	end := min(l.offset+l.visibleItems(), len(l.filtered))
 	rows := make([]string, 0, end-l.offset)
 	for i := l.offset; i < end; i++ {
 		item := l.items[l.filtered[i]]
+		// Each item renders rowHeight lines; joining blocks with "\n" keeps
+		// them contiguous.
 		rows = append(rows, item.Render(l.width, i == l.cursor))
 	}
 	return strings.Join(rows, "\n")

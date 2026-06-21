@@ -56,11 +56,6 @@ var (
 	faint  = lipgloss.NewStyle().Faint(true)
 )
 
-// col pads (or truncates) pre-styled content to exactly w display cells.
-func col(s string, w int) string {
-	return lipgloss.NewStyle().Width(w).MaxWidth(w).Render(s)
-}
-
 // --- data -------------------------------------------------------------------
 
 type label struct {
@@ -76,6 +71,7 @@ type pr struct {
 	State          string    `json:"state"`
 	IsDraft        bool      `json:"isDraft"`
 	UpdatedAt      time.Time `json:"updatedAt"`
+	HeadRefName    string    `json:"headRefName"`
 	Additions      int       `json:"additions"`
 	Deletions      int       `json:"deletions"`
 	Mergeable      string    `json:"mergeable"`
@@ -173,32 +169,64 @@ func (p pr) commentsCell() string {
 	return grey.Render(fmt.Sprintf("%s%d", iconComment, p.Comments.TotalCount))
 }
 
-// Render draws one row: status glyphs, repo, number, diff size, comments, age,
-// then the title (absorbing the remaining width). The selected row gets an
-// accent bar and bold title rather than a full-row background, which keeps the
-// per-column colors intact (lipgloss resets backgrounds between segments).
+// Render draws one PR as a two-line block, à la gh-dash's non-compact layout:
+//
+//	▌  ● ● ●  repo #123 · @author · branch          +12 -3  3  2d
+//	          The pull request title, in bold
+//
+// Line one is dimmed metadata with the status glyphs; line two is the title,
+// indented to align under the metadata. The selected row gets an accent bar on
+// both lines (rather than a full-row background, which lipgloss's per-segment
+// resets would clobber).
 func (p pr) Render(width int, selected bool) string {
-	status := p.stateIcon() + " " + p.ciIcon() + " " + p.reviewIcon()
-
 	bar := "  "
 	if selected {
 		bar = fg("13").Render("▌") + " "
 	}
+	status := p.stateIcon() + " " + p.ciIcon() + " " + p.reviewIcon()
+	prefix := bar + status + "  "
+	indent := lipgloss.Width(prefix)
 
-	left := bar +
-		col(status, 6) + " " +
-		col(cyan.Render(ui.Truncate(p.repo(), 26)), 26) + " " +
-		col(yellow.Render(fmt.Sprintf("#%d", p.Number)), 7) + " " +
-		col(p.diffCell(), 12) + " " +
-		col(p.commentsCell(), 5) + " " +
-		col(grey.Render(ui.Age(p.UpdatedAt)), 4) + " "
+	// Right cluster on line one: diff · comments · age.
+	right := strings.TrimSpace(p.diffCell() + "  " + p.commentsCell() + "  " + grey.Render(ui.Age(p.UpdatedAt)))
 
-	titleW := max(1, width-lipgloss.Width(left))
+	// Left metadata on line one: repo #num · @author · branch. Built in plain
+	// form first so it can be truncated without cutting through ANSI codes.
+	plain := fmt.Sprintf("%s #%d", p.repo(), p.Number)
+	if p.Author.Login != "" {
+		plain += " · @" + p.Author.Login
+	}
+	if p.HeadRefName != "" {
+		plain += " · " + p.HeadRefName
+	}
+
+	avail := max(1, width-indent-lipgloss.Width(right)-1)
+	var meta string
+	if lipgloss.Width(plain) <= avail {
+		meta = cyan.Render(p.repo()) + yellow.Render(fmt.Sprintf(" #%d", p.Number))
+		if p.Author.Login != "" {
+			meta += grey.Render(" · @" + p.Author.Login)
+		}
+		if p.HeadRefName != "" {
+			meta += grey.Render(" · " + p.HeadRefName)
+		}
+	} else {
+		meta = grey.Render(ui.Truncate(plain, avail))
+	}
+
+	gap := max(1, width-indent-lipgloss.Width(meta)-lipgloss.Width(right))
+	line1 := prefix + meta + strings.Repeat(" ", gap) + right
+
+	titleW := max(1, width-indent)
 	title := ui.Truncate(p.Title, titleW)
 	if selected {
 		title = bold.Render(title)
+	} else {
+		title = lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Render(title)
 	}
-	return left + title
+	line2 := bar + strings.Repeat(" ", indent-lipgloss.Width(bar)) + title
+
+	return line1 + "\n" + line2
 }
 
 // --- messages ---------------------------------------------------------------
@@ -232,7 +260,7 @@ type viewKeys struct {
 }
 
 func New(filter string) *View {
-	return &View{
+	v := &View{
 		filter:  filter,
 		list:    ui.NewList[pr](),
 		loading: true,
@@ -242,6 +270,8 @@ func New(filter string) *View {
 			Diff: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "diff")),
 		},
 	}
+	v.list.SetRowHeight(2) // two-line rows: metadata + title
+	return v
 }
 
 func (v *View) Title() string { return "PRs" }
@@ -252,7 +282,7 @@ const graphqlQuery = `query($q: String!) {
   search(query: $q, type: ISSUE, first: 100) {
     nodes {
       ... on PullRequest {
-        number title url state isDraft updatedAt
+        number title url state isDraft updatedAt headRefName
         additions deletions mergeable reviewDecision body
         author { login }
         repository { nameWithOwner }
