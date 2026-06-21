@@ -400,23 +400,24 @@ func (v *View) PreviewView() string {
 	b.WriteString("\n\n")
 
 	// Status line: state · CI · review · diff · comments.
-	b.WriteString(p.stateIcon() + " " + stateWord(p) + "   " +
-		p.ciIcon() + " " + ciWord(p) + "   " +
-		p.reviewIcon() + " " + reviewWord(p))
-	b.WriteString("\n")
+	fmt.Fprintf(&b, "%s %s   %s %s   %s %s\n",
+		p.stateIcon(), stateWord(p), p.ciIcon(), ciWord(p), p.reviewIcon(), reviewWord(p))
 	if d := p.diffCell(); d != "" {
-		b.WriteString(d + "   ")
+		b.WriteString(d)
+		b.WriteString("   ")
 	}
 	if c := p.commentsCell(); c != "" {
 		b.WriteString(c)
 	}
 	if p.Mergeable == "CONFLICTING" {
-		b.WriteString("   " + red.Render("⚠ conflicts"))
+		b.WriteString("   ")
+		b.WriteString(red.Render("⚠ conflicts"))
 	}
 	b.WriteString("\n")
 
 	if pills := labelPills(p.Labels.Nodes); pills != "" {
-		b.WriteString(pills + "\n")
+		b.WriteString(pills)
+		b.WriteByte('\n')
 	}
 
 	b.WriteString(grey.Render(strings.Repeat("─", min(v.prevW, 60))))

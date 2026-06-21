@@ -281,7 +281,8 @@ func (v *View) PreviewView() string {
 		if t.role == "user" {
 			label, style = "▶ you", green
 		}
-		b.WriteString(style.Render(label) + " ")
+		b.WriteString(style.Render(label))
+		b.WriteByte(' ')
 		b.WriteString(wrap.Render(ui.Truncate(t.text, 600)))
 		b.WriteString("\n\n")
 	}
