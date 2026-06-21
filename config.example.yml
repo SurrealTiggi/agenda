@@ -1,0 +1,26 @@
+# agenda configuration — copy to $XDG_CONFIG_HOME/agenda/config.yml
+# (defaults to ~/.config/agenda/config.yml).
+#
+# Every field is optional; agenda ships with the defaults shown here. The PRs
+# and Sessions views work out of the box (PRs reuses your `gh` auth). Only the
+# Linear view needs configuration — a personal API key.
+
+# Which views to show, in tab order. Recognised: prs, sessions, linear.
+views: [prs, sessions, linear]
+
+github:
+  # Search query for the PRs view, in GitHub search syntax. `is:pr` is added
+  # automatically. Examples:
+  #   author:@me is:open archived:false      (your open PRs — default)
+  #   org:my-org review-requested:@me         (PRs awaiting your review)
+  filter: "author:@me is:open archived:false"
+
+linear:
+  # Personal API key. Create one at:
+  #   linear.app -> Settings -> Security & access -> API keys
+  # Without it, the Linear view shows a setup hint instead of issues.
+  token: ""
+
+sessions:
+  # Set to false to hide the agent-sessions view.
+  enabled: true

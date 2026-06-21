@@ -1,0 +1,6 @@
+# Compiled binary
+/agenda
+
+# Go build/test artifacts
+*.test
+*.out
