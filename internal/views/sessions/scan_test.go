@@ -159,6 +159,44 @@ func TestConversationTurnsClaude(t *testing.T) {
 	}
 }
 
+func TestScanMentions(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"type":"user","message":{"content":"working on SRE-4419 today"}}
+{"type":"assistant","message":{"content":"see https://github.com/sanity-io/argocd-apps/pull/7314 for the change"}}
+{"type":"user","message":{"content":"SRE-4419 again, should be deduped"}}
+`
+	ms := scanMentions(writeFile(t, dir, "s.jsonl", content), toolClaude)
+
+	var linear, pr *mention
+	for i := range ms {
+		switch ms[i].Kind {
+		case "linear":
+			linear = &ms[i]
+		case "pr":
+			pr = &ms[i]
+		}
+	}
+	if linear == nil || linear.ID != "SRE-4419" {
+		t.Errorf("linear mention = %+v, want SRE-4419", linear)
+	}
+	if linear != nil && linear.Snippet == "" {
+		t.Error("linear mention has no context snippet")
+	}
+	if pr == nil || pr.ID != "https://github.com/sanity-io/argocd-apps/pull/7314" {
+		t.Errorf("pr mention = %+v, want the PR URL", pr)
+	}
+	// SRE-4419 appears twice but should be recorded once.
+	count := 0
+	for _, m := range ms {
+		if m.ID == "SRE-4419" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("SRE-4419 recorded %d times, want 1 (deduped)", count)
+	}
+}
+
 func TestSortSessions(t *testing.T) {
 	base := time.Now()
 	in := []session{

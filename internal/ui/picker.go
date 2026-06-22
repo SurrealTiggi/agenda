@@ -7,16 +7,23 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// PickerItem is one choice in a Picker: a label plus an optional dimmed detail
+// line shown beneath it (e.g. a snippet of context).
+type PickerItem struct {
+	Label  string
+	Detail string
+}
+
 // Picker is a small modal list for choosing one option (e.g. which referenced
-// issue to jump to when a PR links several). The host model owns it, routes key
-// messages to Update while it's open, and composites View over its content.
+// item to jump to). The host model owns it, routes key messages to Update while
+// it's open, and composites View over its content.
 type Picker struct {
 	title  string
-	items  []string
+	items  []PickerItem
 	cursor int
 }
 
-func NewPicker(title string, items []string) Picker {
+func NewPicker(title string, items []PickerItem) Picker {
 	return Picker{title: title, items: items}
 }
 
@@ -49,21 +56,30 @@ func (p *Picker) Index() int { return p.cursor }
 
 // View renders the modal box. The caller composites it over its own content.
 func (p *Picker) View() string {
+	dim := lipgloss.NewStyle().Faint(true)
+	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	bold := lipgloss.NewStyle().Bold(true)
+
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render(p.title))
+	b.WriteString(bold.Render(p.title))
 	b.WriteString("\n\n")
 	for i, it := range p.items {
 		if i == p.cursor {
-			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Render("▌ "))
-			b.WriteString(lipgloss.NewStyle().Bold(true).Render(it))
+			b.WriteString(accent.Render("▌ "))
+			b.WriteString(bold.Render(it.Label))
 		} else {
 			b.WriteString("  ")
-			b.WriteString(it)
+			b.WriteString(it.Label)
 		}
 		b.WriteByte('\n')
+		if it.Detail != "" {
+			b.WriteString("    ")
+			b.WriteString(dim.Render(Truncate(it.Detail, 70)))
+			b.WriteByte('\n')
+		}
 	}
 	b.WriteByte('\n')
-	b.WriteString(lipgloss.NewStyle().Faint(true).Render("↑/↓ select · enter open · esc cancel"))
+	b.WriteString(dim.Render("↑/↓ select · enter open · esc cancel"))
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

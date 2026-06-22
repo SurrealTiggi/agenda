@@ -9,7 +9,7 @@ import (
 func press(code rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code} }
 
 func TestPickerNavigation(t *testing.T) {
-	p := NewPicker("Follow", []string{"a", "b", "c"})
+	p := NewPicker("Follow", []PickerItem{{Label: "a"}, {Label: "b"}, {Label: "c"}})
 	if p.Index() != 0 {
 		t.Fatalf("initial Index = %d, want 0", p.Index())
 	}
@@ -30,7 +30,7 @@ func TestPickerNavigation(t *testing.T) {
 }
 
 func TestPickerVimKeys(t *testing.T) {
-	p := NewPicker("x", []string{"a", "b"})
+	p := NewPicker("x", []PickerItem{{Label: "a"}, {Label: "b"}})
 	p.Update(press('j'))
 	if p.Index() != 1 {
 		t.Errorf("after j Index = %d, want 1", p.Index())
@@ -42,7 +42,7 @@ func TestPickerVimKeys(t *testing.T) {
 }
 
 func TestPickerConfirmAndCancel(t *testing.T) {
-	p := NewPicker("x", []string{"a", "b"})
+	p := NewPicker("x", []PickerItem{{Label: "a"}, {Label: "b"}})
 	if done, cancelled := p.Update(press(tea.KeyEnter)); !done || cancelled {
 		t.Errorf("enter: done=%v cancelled=%v, want true/false", done, cancelled)
 	}

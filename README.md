@@ -92,22 +92,34 @@ linear:
 
 ## Cross-references
 
-Views link to each other and `l` follows the link, both directions:
+Views link to each other and `l` follows the link, in every direction:
 
-- From a **PR** → the Linear issue it references (detected from the title,
-  branch, or body).
-- From a **Linear issue** → the GitHub PRs attached to it.
+- **PR** → the Linear issue it references (from the title, branch, or body).
+- **Linear issue** → the GitHub PRs attached to it (each shown with live
+  state/CI/review icons) and the agent **sessions** that mention it.
+- **Session** → the issues and PRs its conversation mentions.
+- **PR / issue** → the **sessions** that mention them, each with a dimmed line
+  of context from the session.
 
 A picker lists the targets (always, even for a single one, so navigation never
-happens without a prompt); pick one to follow it. References that resolve to a
-loaded item jump in-app; ones that don't (e.g. a merged PR, or a PR by someone
-else) open in the browser instead, marked with `↗`. References that resolve to
-nothing at all — like regex false-positives with no URL — are dropped.
+happens without a prompt). References that resolve to a loaded item jump in-app;
+ones that don't (e.g. a merged PR, or a PR by someone else) open in the browser,
+marked with `↗`. References that resolve to nothing — like regex false-positives
+with no URL — are dropped.
 
-The mechanism is generic: a view exposes links by implementing `Referencer`,
-and becomes a jump destination by implementing `RefTarget`. Adding a new link
-type (e.g. session → its repo's PRs) is just implementing those interfaces — no
-core changes.
+### How it fits together
+
+A small shared **metadata store** (`internal/store`) decouples the views: each
+publishes the facts it owns — the PRs view publishes pull-request status, the
+sessions view publishes which issues/PRs each session mentions — and any view
+reads the others' to enrich its display. That's how the Linear view shows CI
+icons for a PR (data the PRs view has) and lists the sessions referencing an
+issue (data the sessions view has), without depending on those packages.
+
+The cross-reference wiring itself is generic: a view exposes links by
+implementing `Referencer`, and becomes a jump destination by implementing
+`RefTarget`. Adding a new link type is just implementing those interfaces and,
+if needed, publishing to the store — no changes to the core.
 
 ## License
 
