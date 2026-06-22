@@ -250,15 +250,64 @@ func (l *List[T]) View() string {
 		return lipgloss.NewStyle().Faint(true).Render(empty)
 	}
 
-	end := min(l.offset+l.visibleItems(), len(l.filtered))
-	rows := make([]string, 0, end-l.offset)
-	for i := l.offset; i < end; i++ {
-		item := l.items[l.filtered[i]]
-		// Each item renders rowHeight lines; joining blocks with "\n" keeps
-		// them contiguous.
-		rows = append(rows, item.Render(l.width, i == l.cursor))
+	win := l.visibleItems()
+	end := min(l.offset+win, len(l.filtered))
+
+	// Reserve a right-hand gutter for the scrollbar (2 cols: bar + a gap) when
+	// there's room, so item width stays stable whether or not it overflows.
+	contentW := l.width
+	gutter := l.width >= 3 && l.height > 0
+	if gutter {
+		contentW = l.width - 2
 	}
-	return strings.Join(rows, "\n")
+
+	var lines []string
+	for i := l.offset; i < end; i++ {
+		block := l.items[l.filtered[i]].Render(contentW, i == l.cursor)
+		lines = append(lines, strings.Split(block, "\n")...)
+	}
+	if !gutter {
+		return strings.Join(lines, "\n")
+	}
+
+	// Pad/clip to exactly the pane height, then attach the scrollbar column.
+	for len(lines) < l.height {
+		lines = append(lines, "")
+	}
+	lines = lines[:l.height]
+	bar := scrollbar(l.height, len(l.filtered), win, l.offset)
+	for i := range lines {
+		pad := max(0, contentW-lipgloss.Width(lines[i]))
+		lines[i] += strings.Repeat(" ", pad) + " " + bar[i]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// scrollbar returns height cells for a vertical scrollbar: a thumb sized to the
+// visible fraction and positioned by offset, over a faint track. When all items
+// fit (no overflow) it returns blanks, so the gutter stays reserved but empty.
+func scrollbar(height, total, visible, offset int) []string {
+	track := lipgloss.NewStyle().Faint(true).Render("│")
+	thumb := lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Render("█")
+
+	out := make([]string, height)
+	if total <= visible { // everything visible: no bar
+		for i := range out {
+			out[i] = " "
+		}
+		return out
+	}
+	size := min(max(1, height*visible/total), height)
+	pos := (height - size) * offset / (total - visible)
+	pos = clamp(pos, 0, height-size)
+	for i := range out {
+		if i >= pos && i < pos+size {
+			out[i] = thumb
+		} else {
+			out[i] = track
+		}
+	}
+	return out
 }
 
 // FilterLine renders the active filter prompt (for a view to show in a header).
