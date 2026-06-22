@@ -18,7 +18,7 @@ type Ref struct {
 // SessionRef builds a Ref pointing at an agent session (kind "session", keyed
 // by file path), with a dimmed context snippet for the picker.
 func SessionRef(path, tool, cwd, title, snippet string) Ref {
-	label := tool
+	label := AgentIcon(tool)
 	switch {
 	case cwd != "":
 		label += "  " + cwd

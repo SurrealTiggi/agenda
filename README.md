@@ -84,9 +84,11 @@ linear:
 - **PRs** — fetched via `gh api graphql`. Shows state/CI/review glyphs, `+/−`
   diff size, comments, and labels; preview renders the description with Glamour.
 - **Sessions** — scans `~/.claude`, `~/.codex`, and `~/.gemini/antigravity-cli`,
-  caching parsed metadata by file signature. `enter` resumes the selected
-  session in its original directory; `s` cycles sort (recent / oldest / cwd /
-  tool / msgs). Originally a Python tool, ported to Go.
+  caching parsed metadata by file signature. Each agent is shown as a Nerd Font
+  icon (claude = robot, codex = code, antigravity = rocket) rather than its
+  name. `enter` resumes the selected session in its original directory; `s`
+  cycles sort (recent / oldest / cwd / tool / msgs). Originally a Python tool,
+  ported to Go.
 - **Linear** — issues assigned to you (active states), via the Linear GraphQL
   API. Preview shows status, priority, labels, branch name, and the description.
 
