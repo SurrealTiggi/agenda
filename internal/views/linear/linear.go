@@ -386,6 +386,15 @@ func (v *View) InputActive() bool { return v.list.Filtering() }
 
 func (v *View) PreviewKey() string { return v.list.Selected().Identifier }
 
+// SelectIssue moves the cursor to the issue with the given identifier (case
+// insensitive), returning whether it was found among the loaded issues. Used
+// when jumping here from a PR that references the issue.
+func (v *View) SelectIssue(id string) bool {
+	return v.list.Select(func(i issue) bool {
+		return strings.EqualFold(i.Identifier, id)
+	})
+}
+
 // --- helpers ----------------------------------------------------------------
 
 func labelPills(labels []label) string {

@@ -8,7 +8,14 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/obliadp/agenda/internal/config"
+	"github.com/obliadp/agenda/internal/ui"
 )
+
+// issueSelector is implemented by views that can jump to a referenced issue
+// (the Linear view). The root model discovers it by capability, not by name.
+type issueSelector interface {
+	SelectIssue(id string) bool
+}
 
 const (
 	tabBarHeight = 2 // tab labels + bottom border
@@ -60,6 +67,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
 		m.layout()
+		return m, nil
+
+	case ui.GoToLinearMsg:
+		// Switch to the issue-selecting view (Linear) and select the issue.
+		for i, v := range m.views {
+			if sel, ok := v.(issueSelector); ok {
+				sel.SelectIssue(msg.Identifier)
+				m.current = i
+				m.syncPreviewKey(true)
+				break
+			}
+		}
 		return m, nil
 
 	case tea.KeyMsg:

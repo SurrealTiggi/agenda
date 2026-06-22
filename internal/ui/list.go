@@ -118,6 +118,19 @@ func (l *List[T]) Len() int { return len(l.filtered) }
 // Total is the number of items before filtering.
 func (l *List[T]) Total() int { return len(l.items) }
 
+// Select moves the cursor to the first visible item matching pred, returning
+// whether one was found.
+func (l *List[T]) Select(pred func(T) bool) bool {
+	for i, idx := range l.filtered {
+		if pred(l.items[idx]) {
+			l.cursor = i
+			l.clampCursor()
+			return true
+		}
+	}
+	return false
+}
+
 // Selected returns the currently-highlighted item, or the zero value if empty.
 func (l *List[T]) Selected() T {
 	var zero T

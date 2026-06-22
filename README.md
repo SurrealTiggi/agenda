@@ -74,7 +74,7 @@ linear:
 | Global | `shift+↑`/`shift+↓`, `PgUp`/`PgDn` | scroll preview |
 | Global | `ctrl+r` | refresh |
 | Global | `q` | quit |
-| PRs | `enter` · `d` · `y` | open · diff · copy URL |
+| PRs | `enter` · `d` · `y` · `l` | open · diff · copy URL · jump to referenced Linear issue |
 | Sessions | `enter` · `s` | resume · cycle sort |
 | Linear | `enter` · `y` · `b` | open · copy URL · copy branch |
 

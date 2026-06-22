@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"image/color"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -111,6 +112,24 @@ func (p pr) ciState() string {
 
 func (p pr) Filter() string {
 	return fmt.Sprintf("%s #%d %s", p.repo(), p.Number, p.Title)
+}
+
+// linearRefRe matches a Linear issue identifier (team key + number), e.g.
+// "SRE-4228" in a title or "sre-3686" in a branch name like
+// "orjan/sre-3686-add-foo". The team key is letters only, so version-ish
+// tokens like "v2-foo" don't match.
+var linearRefRe = regexp.MustCompile(`(?i)\b([a-z]{2,}-\d+)\b`)
+
+// linearRef returns the Linear identifier this PR references (uppercased), or
+// "" if none is found. It checks the title, branch, then body — the places a
+// Linear issue is conventionally named.
+func (p pr) linearRef() string {
+	for _, s := range []string{p.Title, p.HeadRefName, p.Body} {
+		if m := linearRefRe.FindStringSubmatch(s); m != nil {
+			return strings.ToUpper(m[1])
+		}
+	}
+	return ""
 }
 
 // --- icon rendering ---------------------------------------------------------
@@ -225,9 +244,10 @@ type View struct {
 }
 
 type viewKeys struct {
-	Open key.Binding
-	Copy key.Binding
-	Diff key.Binding
+	Open   key.Binding
+	Copy   key.Binding
+	Diff   key.Binding
+	Linear key.Binding
 }
 
 func New(filter string) *View {
@@ -236,9 +256,10 @@ func New(filter string) *View {
 		list:    ui.NewList[pr](),
 		loading: true,
 		keys: viewKeys{
-			Open: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
-			Copy: key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy url")),
-			Diff: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "diff")),
+			Open:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
+			Copy:   key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy url")),
+			Diff:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "diff")),
+			Linear: key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "linear issue")),
 		},
 	}
 	v.list.SetRowHeight(2) // two-line rows: metadata + title
@@ -319,6 +340,10 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 			return v.copySelected()
 		case key.Matches(msg, v.keys.Diff):
 			return v.diffSelected()
+		case key.Matches(msg, v.keys.Linear):
+			if id := v.list.Selected().linearRef(); id != "" {
+				return func() tea.Msg { return ui.GoToLinearMsg{Identifier: id} }
+			}
 		}
 	}
 	return nil
@@ -452,7 +477,12 @@ func (v *View) renderedBody(p pr) string {
 }
 
 func (v *View) Bindings() []key.Binding {
-	return []key.Binding{v.keys.Open, v.keys.Diff, v.keys.Copy}
+	b := []key.Binding{v.keys.Open, v.keys.Diff, v.keys.Copy}
+	// Only advertise the jump when the selected PR actually references an issue.
+	if v.list.Selected().linearRef() != "" {
+		b = append(b, v.keys.Linear)
+	}
+	return b
 }
 
 func (v *View) Status() string {
