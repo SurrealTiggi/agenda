@@ -16,6 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/obliadp/agenda/internal/store"
 	"github.com/obliadp/agenda/internal/ui"
 )
 
@@ -118,9 +119,10 @@ type resumedMsg struct{}
 // --- view -------------------------------------------------------------------
 
 type View struct {
-	list ui.List[session]
-	raw  []session
-	sort sortMode
+	list  ui.List[session]
+	raw   []session
+	sort  sortMode
+	store *store.Store
 
 	loading bool
 
@@ -134,8 +136,9 @@ type viewKeys struct {
 	Sort   key.Binding
 }
 
-func New() *View {
+func New(st *store.Store) *View {
 	v := &View{
+		store:   st,
 		list:    ui.NewList[session](),
 		loading: true,
 		keys: viewKeys{
@@ -165,6 +168,7 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 		v.loading = false
 		v.raw = []session(msg)
 		v.applySort()
+		v.publishMentions()
 		return nil
 	case resumedMsg:
 		// Resuming likely changed mtimes; rescan so order/age stay accurate.
@@ -286,3 +290,55 @@ func (v *View) Status() string { return grey.Render(v.statusText()) }
 func (v *View) InputActive() bool { return v.list.Filtering() }
 
 func (v *View) PreviewKey() string { return v.list.Selected().Path }
+
+// publishMentions rebuilds the shared reverse index (entity -> sessions that
+// mention it) so the PRs and Linear views can list the sessions referencing a
+// given PR or issue.
+func (v *View) publishMentions() {
+	if v.store == nil {
+		return
+	}
+	index := map[string][]store.SessionRef{}
+	for _, s := range v.raw {
+		for _, mn := range s.Mentions {
+			key := store.Key(mn.Kind, mn.ID)
+			index[key] = append(index[key], store.SessionRef{
+				Path:    s.Path,
+				Tool:    string(s.Tool),
+				Title:   s.titleOr(),
+				Cwd:     shortenPath(s.Cwd),
+				Snippet: mn.Snippet,
+			})
+		}
+	}
+	v.store.SetSessionMentions(index)
+}
+
+// Refs implements ui.Referencer: the Linear issues and PRs this session mentions.
+func (v *View) Refs() []ui.Ref {
+	var refs []ui.Ref
+	for _, mn := range v.list.Selected().Mentions {
+		switch mn.Kind {
+		case "linear":
+			refs = append(refs, ui.Ref{Kind: "linear", ID: mn.ID, Label: "Linear  " + mn.ID})
+		case "pr":
+			label := "PR  " + mn.ID
+			if repo, num, ok := ui.ParsePRURL(mn.ID); ok {
+				label = fmt.Sprintf("PR  %s#%d", repo, num)
+			}
+			refs = append(refs, ui.Ref{Kind: "pr", ID: mn.ID, Label: label, URL: mn.ID})
+		}
+	}
+	return refs
+}
+
+// RefKind / HasRef / SelectRef implement ui.RefTarget so other views can jump
+// to a session here. Sessions are keyed by file path.
+func (v *View) RefKind() string { return "session" }
+
+func matchPath(path string) func(session) bool {
+	return func(s session) bool { return s.Path == path }
+}
+
+func (v *View) HasRef(id string) bool    { return v.list.Any(matchPath(id)) }
+func (v *View) SelectRef(id string) bool { return v.list.Select(matchPath(id)) }

@@ -118,7 +118,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Follow a cross-reference: always confirm via the picker (even for
 			// a single target) so navigation never happens without a prompt.
 			if refs := m.currentRefs(); len(refs) > 0 {
-				p := ui.NewPicker("Follow reference", m.pickerLabels(refs))
+				p := ui.NewPicker("Follow reference", m.pickerItems(refs))
 				m.picker, m.pickerRefs = &p, refs
 				return m, nil
 			}
@@ -222,17 +222,19 @@ func (m *Model) followRef(ref ui.Ref) tea.Cmd {
 	return ui.OpenURL(ref.URL) // unresolved → browser (no-op if URL is "")
 }
 
-// pickerLabels annotates browser-bound refs with a ↗ so the user knows they
-// open externally rather than jumping in-app.
-func (m Model) pickerLabels(refs []ui.Ref) []string {
-	labels := make([]string, len(refs))
+// pickerItems builds the picker entries, annotating browser-bound refs with a
+// ↗ (they open externally rather than jumping in-app) and carrying each ref's
+// context snippet as the dimmed detail line.
+func (m Model) pickerItems(refs []ui.Ref) []ui.PickerItem {
+	items := make([]ui.PickerItem, len(refs))
 	for i, r := range refs {
-		labels[i] = r.Label
+		label := r.Label
 		if !m.resolves(r) {
-			labels[i] += "  ↗"
+			label += "  ↗"
 		}
+		items[i] = ui.PickerItem{Label: label, Detail: r.Detail}
 	}
-	return labels
+	return items
 }
 
 // layout recomputes per-view sizes after a resize.

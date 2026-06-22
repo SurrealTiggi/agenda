@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/obliadp/agenda/internal/config"
+	"github.com/obliadp/agenda/internal/store"
 	"github.com/obliadp/agenda/internal/tui"
 	"github.com/obliadp/agenda/internal/views/linear"
 	"github.com/obliadp/agenda/internal/views/prs"
@@ -24,19 +25,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Build the configured views in tab order. (Placeholders for now — each
-	// will be swapped for its real implementation.)
+	// Shared metadata store: views publish facts they own (PR status, session
+	// mentions) and read each other's to render cross-references.
+	st := store.New()
+
+	// Build the configured views in tab order.
 	var views []tui.View
 	for _, name := range cfg.Views {
 		switch name {
 		case "prs":
-			views = append(views, prs.New(cfg.GitHub.Filter))
+			views = append(views, prs.New(cfg.GitHub.Filter, st))
 		case "sessions":
 			if cfg.SessionsEnabled() {
-				views = append(views, sessions.New())
+				views = append(views, sessions.New(st))
 			}
 		case "linear":
-			views = append(views, linear.New(cfg.Linear.Token))
+			views = append(views, linear.New(cfg.Linear.Token, st))
 		}
 	}
 

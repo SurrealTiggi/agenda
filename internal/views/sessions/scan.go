@@ -21,12 +21,21 @@ const (
 
 const maxTitle = 120
 
+// mention is a Linear issue or GitHub PR referenced in a session's
+// conversation, with a snippet of the surrounding text for context.
+type mention struct {
+	Kind    string `json:"kind"` // "linear" | "pr"
+	ID      string `json:"id"`   // uppercased issue identifier, or PR URL
+	Snippet string `json:"snippet"`
+}
+
 // meta is the parsed summary of one session file (the cacheable part).
 type meta struct {
-	Cwd       string `json:"cwd"`
-	Title     string `json:"title"`
-	Msgs      int    `json:"msgs"`
-	SessionID string `json:"session_id"`
+	Cwd       string    `json:"cwd"`
+	Title     string    `json:"title"`
+	Msgs      int       `json:"msgs"`
+	SessionID string    `json:"session_id"`
+	Mentions  []mention `json:"mentions"`
 }
 
 // session is one row: parsed meta plus filesystem facts.
@@ -443,6 +452,47 @@ func conversationTurns(path string, t tool) []turn {
 		})
 	}
 	return turns
+}
+
+var (
+	mentionLinearRe = regexp.MustCompile(`(?i)\b([a-z]{2,}-\d+)\b`)
+	mentionPRRe     = regexp.MustCompile(`(?:https?://)?github\.com/[^/\s]+/[^/\s]+/pull/\d+`)
+)
+
+// canonPRURL normalizes a matched PR URL to "https://github.com/..." so it
+// matches the URL keys the PRs view and Linear attachments use.
+func canonPRURL(u string) string {
+	u = strings.TrimPrefix(u, "https://")
+	u = strings.TrimPrefix(u, "http://")
+	return "https://" + u
+}
+
+// scanMentions walks a session's conversation and returns the Linear issues and
+// GitHub PRs it references, each with a one-line context snippet. The first
+// occurrence of each distinct entity wins. False-positives are harmless: the
+// reverse lookup is keyed by a real issue/PR, and unmatched keys are queried by
+// nobody.
+func scanMentions(path string, t tool) []mention {
+	var out []mention
+	seen := map[string]bool{}
+	for _, tn := range conversationTurns(path, t) {
+		snippet := cleanText(tn.text)
+		for _, m := range mentionLinearRe.FindAllString(tn.text, -1) {
+			id := strings.ToUpper(m)
+			if key := "linear:" + id; !seen[key] {
+				seen[key] = true
+				out = append(out, mention{Kind: "linear", ID: id, Snippet: snippet})
+			}
+		}
+		for _, url := range mentionPRRe.FindAllString(tn.text, -1) {
+			url = canonPRURL(url)
+			if key := "pr:" + url; !seen[key] {
+				seen[key] = true
+				out = append(out, mention{Kind: "pr", ID: url, Snippet: snippet})
+			}
+		}
+	}
+	return out
 }
 
 func parse(path string, t tool) meta {

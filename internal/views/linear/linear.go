@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -24,6 +23,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/obliadp/agenda/internal/config"
+	"github.com/obliadp/agenda/internal/store"
 	"github.com/obliadp/agenda/internal/ui"
 )
 
@@ -39,6 +39,8 @@ var (
 	blue   = fg("4")
 	grey   = fg("8")
 	cyan   = fg("6")
+	green  = fg("2")
+	purple = fg("5")
 	bold   = lipgloss.NewStyle().Bold(true)
 	faint  = lipgloss.NewStyle().Faint(true)
 )
@@ -141,6 +143,7 @@ type errMsg struct{ err error }
 type View struct {
 	token string
 	list  ui.List[issue]
+	store *store.Store
 
 	loading bool
 	err     error
@@ -159,9 +162,10 @@ type viewKeys struct {
 	Branch key.Binding
 }
 
-func New(token string) *View {
+func New(token string, st *store.Store) *View {
 	v := &View{
 		token:   token,
+		store:   st,
 		list:    ui.NewList[issue](),
 		loading: token != "",
 		keys: viewKeys{
@@ -404,29 +408,68 @@ func matchID(id string) func(issue) bool {
 func (v *View) HasRef(id string) bool    { return v.list.Any(matchID(id)) }
 func (v *View) SelectRef(id string) bool { return v.list.Select(matchID(id)) }
 
-// prURLRe captures "owner/repo" and the number from a GitHub PR URL.
-var prURLRe = regexp.MustCompile(`github\.com/([^/]+/[^/]+)/pull/(\d+)`)
-
-// parsePRRef turns a GitHub PR URL into a ui.Ref (Kind "pr", keyed by URL).
-func parsePRRef(url string) (ui.Ref, bool) {
-	m := prURLRe.FindStringSubmatch(url)
-	if m == nil {
-		return ui.Ref{}, false
+// prIcons renders state/CI/review/conflict glyphs for a stored PR, matching
+// the PRs view's vocabulary.
+func prIcons(p store.PR) string {
+	var parts []string
+	switch p.State {
+	case store.PRMerged:
+		parts = append(parts, purple.Render(ui.IconMerged))
+	case store.PRClosed:
+		parts = append(parts, red.Render(ui.IconClosed))
+	case store.PRDraft:
+		parts = append(parts, grey.Render(ui.IconDraft))
+	default:
+		parts = append(parts, green.Render(ui.IconOpen))
 	}
-	return ui.Ref{Kind: "pr", ID: url, Label: "PR  " + m[1] + "#" + m[2], URL: url}, true
+	switch p.CI {
+	case store.CIPassing:
+		parts = append(parts, green.Render(ui.IconCIOK))
+	case store.CIFailing:
+		parts = append(parts, red.Render(ui.IconCIFail))
+	case store.CIPending:
+		parts = append(parts, yellow.Render(ui.IconCIPending))
+	}
+	switch p.Review {
+	case store.ReviewApproved:
+		parts = append(parts, green.Render(ui.IconApproved))
+	case store.ReviewChanges:
+		parts = append(parts, red.Render(ui.IconChanges))
+	case store.ReviewPending:
+		parts = append(parts, yellow.Render(ui.IconReviewReq))
+	}
+	if p.HasConflicts {
+		parts = append(parts, red.Render("⚠"))
+	}
+	return strings.Join(parts, " ")
 }
 
-// Refs implements ui.Referencer: the GitHub PRs attached to the selected issue.
+// Refs implements ui.Referencer: the GitHub PRs attached to the selected issue
+// (with CI/review status icons sourced from the shared store), plus the agent
+// sessions that mention the issue.
 func (v *View) Refs() []ui.Ref {
+	sel := v.list.Selected()
 	var refs []ui.Ref
 	seen := map[string]bool{}
-	for _, a := range v.list.Selected().Attachments.Nodes {
-		if a.SourceType != "github" {
+	for _, a := range sel.Attachments.Nodes {
+		repo, num, ok := ui.ParsePRURL(a.URL)
+		if a.SourceType != "github" || !ok || seen[a.URL] {
 			continue
 		}
-		if ref, ok := parsePRRef(a.URL); ok && !seen[ref.ID] {
-			seen[ref.ID] = true
-			refs = append(refs, ref)
+		seen[a.URL] = true
+		label := fmt.Sprintf("PR  %s#%d", repo, num)
+		if v.store != nil {
+			if pr, ok := v.store.PR(a.URL); ok {
+				if icons := prIcons(pr); icons != "" {
+					label = icons + "  " + label
+				}
+			}
+		}
+		refs = append(refs, ui.Ref{Kind: "pr", ID: a.URL, Label: label, URL: a.URL})
+	}
+	if v.store != nil {
+		for _, s := range v.store.SessionsMentioning(store.Key("linear", sel.Identifier)) {
+			refs = append(refs, ui.SessionRef(s.Path, s.Tool, s.Cwd, s.Title, s.Snippet))
 		}
 	}
 	return refs

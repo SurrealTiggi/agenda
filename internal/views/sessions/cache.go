@@ -8,6 +8,10 @@ import (
 	"sort"
 )
 
+// cacheVersion is bumped whenever meta's schema changes, so stale on-disk
+// caches are discarded rather than read back missing new fields.
+const cacheVersion = "v2"
+
 // cacheEntry stores a parsed meta keyed by a cheap file signature so unchanged
 // files are never re-parsed. This mirrors the Python tool's meta-cache.
 type cacheEntry struct {
@@ -66,13 +70,16 @@ func collect() []session {
 		if err != nil {
 			continue
 		}
-		sig := fmt.Sprintf("%d:%d", st.ModTime().Unix(), st.Size())
+		// The version prefix invalidates the whole cache when meta's schema
+		// changes (e.g. when Mentions were added), forcing a re-parse.
+		sig := fmt.Sprintf("%s:%d:%d", cacheVersion, st.ModTime().Unix(), st.Size())
 
 		var m meta
 		if c, ok := cache[f.path]; ok && c.Sig == sig {
 			m = c.Meta
 		} else {
 			m = parse(f.path, f.tool)
+			m.Mentions = scanMentions(f.path, f.tool)
 		}
 		next[f.path] = cacheEntry{Sig: sig, Meta: m}
 

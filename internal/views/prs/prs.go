@@ -23,23 +23,8 @@ import (
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/obliadp/agenda/internal/store"
 	"github.com/obliadp/agenda/internal/ui"
-)
-
-// Nerd Font glyphs (the user runs a Nerd Font, as gh-dash also requires).
-const (
-	iconOpen      = "" //
-	iconDraft     = "" //
-	iconMerged    = "" //
-	iconClosed    = "" //
-	iconCIOK      = "" //
-	iconCIFail    = "" //
-	iconCIPending = "" //
-	iconApproved  = "󰄜"
-	iconChanges   = ""
-	iconReviewReq = ""
-	iconComment   = ""
-	iconDot       = "·"
 )
 
 // --- styles -----------------------------------------------------------------
@@ -143,39 +128,39 @@ func (p pr) linearRefs() []string {
 func (p pr) stateIcon() string {
 	switch {
 	case p.IsDraft:
-		return grey.Render(iconDraft)
+		return grey.Render(ui.IconDraft)
 	case p.State == "MERGED":
-		return purple.Render(iconMerged)
+		return purple.Render(ui.IconMerged)
 	case p.State == "CLOSED":
-		return red.Render(iconClosed)
+		return red.Render(ui.IconClosed)
 	default:
-		return green.Render(iconOpen)
+		return green.Render(ui.IconOpen)
 	}
 }
 
 func (p pr) ciIcon() string {
 	switch p.ciState() {
 	case "SUCCESS":
-		return green.Render(iconCIOK)
+		return green.Render(ui.IconCIOK)
 	case "FAILURE", "ERROR":
-		return red.Render(iconCIFail)
+		return red.Render(ui.IconCIFail)
 	case "PENDING", "EXPECTED":
-		return yellow.Render(iconCIPending)
+		return yellow.Render(ui.IconCIPending)
 	default:
-		return grey.Render(iconDot)
+		return grey.Render(ui.IconDot)
 	}
 }
 
 func (p pr) reviewIcon() string {
 	switch p.ReviewDecision {
 	case "APPROVED":
-		return green.Render(iconApproved)
+		return green.Render(ui.IconApproved)
 	case "CHANGES_REQUESTED":
-		return red.Render(iconChanges)
+		return red.Render(ui.IconChanges)
 	case "REVIEW_REQUIRED":
-		return yellow.Render(iconReviewReq)
+		return yellow.Render(ui.IconReviewReq)
 	default:
-		return grey.Render(iconDot)
+		return grey.Render(ui.IconDot)
 	}
 }
 
@@ -191,7 +176,7 @@ func (p pr) commentsCell() string {
 	if p.Comments.TotalCount == 0 {
 		return ""
 	}
-	return grey.Render(fmt.Sprintf("%s%d", iconComment, p.Comments.TotalCount))
+	return grey.Render(fmt.Sprintf("%s%d", ui.IconComment, p.Comments.TotalCount))
 }
 
 // Render draws one PR as a two-line block, à la gh-dash's non-compact layout:
@@ -235,6 +220,7 @@ type errMsg struct{ err error }
 type View struct {
 	filter string
 	list   ui.List[pr]
+	store  *store.Store
 
 	loading bool
 	err     error
@@ -255,9 +241,10 @@ type viewKeys struct {
 	Diff key.Binding
 }
 
-func New(filter string) *View {
+func New(filter string, st *store.Store) *View {
 	v := &View{
 		filter:  filter,
+		store:   st,
 		list:    ui.NewList[pr](),
 		loading: true,
 		keys: viewKeys{
@@ -325,6 +312,7 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 		v.loading = false
 		v.err = nil
 		v.list.SetItems([]pr(msg))
+		v.publish([]pr(msg))
 		return nil
 	case errMsg:
 		v.loading = false
@@ -349,13 +337,82 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-// Refs implements ui.Referencer: the Linear issues this PR points at.
+// Refs implements ui.Referencer: the Linear issues this PR points at, plus the
+// agent sessions that mention this PR (sourced from the shared store).
 func (v *View) Refs() []ui.Ref {
+	sel := v.list.Selected()
 	var refs []ui.Ref
-	for _, id := range v.list.Selected().linearRefs() {
+	for _, id := range sel.linearRefs() {
 		refs = append(refs, ui.Ref{Kind: "linear", ID: id, Label: "Linear  " + id})
 	}
+	if v.store != nil && sel.URL != "" {
+		for _, s := range v.store.SessionsMentioning(store.Key("pr", sel.URL)) {
+			refs = append(refs, ui.SessionRef(s.Path, s.Tool, s.Cwd, s.Title, s.Snippet))
+		}
+	}
 	return refs
+}
+
+// publish pushes the loaded PRs' status into the shared store so other views
+// (Linear) can render CI/review/merge icons for PRs they reference.
+func (v *View) publish(prs []pr) {
+	if v.store == nil {
+		return
+	}
+	recs := make([]store.PR, 0, len(prs))
+	for _, p := range prs {
+		recs = append(recs, store.PR{
+			URL:          p.URL,
+			Repo:         p.repo(),
+			Number:       p.Number,
+			Title:        p.Title,
+			State:        prState(p),
+			CI:           ciState(p),
+			Review:       reviewState(p),
+			HasConflicts: p.Mergeable == "CONFLICTING",
+			UpdatedAt:    p.UpdatedAt,
+		})
+	}
+	v.store.PutPRs(recs)
+}
+
+func prState(p pr) store.PRState {
+	switch {
+	case p.IsDraft:
+		return store.PRDraft
+	case p.State == "MERGED":
+		return store.PRMerged
+	case p.State == "CLOSED":
+		return store.PRClosed
+	default:
+		return store.PROpen
+	}
+}
+
+func ciState(p pr) store.CIState {
+	switch p.ciState() {
+	case "SUCCESS":
+		return store.CIPassing
+	case "FAILURE", "ERROR":
+		return store.CIFailing
+	case "PENDING", "EXPECTED":
+		return store.CIPending
+	default:
+		return store.CIUnknown
+	}
+}
+
+func reviewState(p pr) store.ReviewState {
+	switch p.ReviewDecision {
+	case "APPROVED":
+		return store.ReviewApproved
+	case "CHANGES_REQUESTED":
+		return store.ReviewChanges
+	case "REVIEW_REQUIRED":
+		return store.ReviewPending
+	default:
+		return store.ReviewNone
+	}
 }
 
 // RefKind / HasRef / SelectRef implement ui.RefTarget so other views (e.g.
