@@ -115,10 +115,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollPreview(m.contentHeight() - 2)
 			return m, nil
 		case key.Matches(msg, m.keys.Follow):
-			// Follow a cross-reference: jump if there's one, pick if several.
-			if refs := m.currentRefs(); len(refs) == 1 {
-				return m, m.followRef(refs[0])
-			} else if len(refs) > 1 {
+			// Follow a cross-reference: always confirm via the picker (even for
+			// a single target) so navigation never happens without a prompt.
+			if refs := m.currentRefs(); len(refs) > 0 {
 				p := ui.NewPicker("Follow reference", m.pickerLabels(refs))
 				m.picker, m.pickerRefs = &p, refs
 				return m, nil

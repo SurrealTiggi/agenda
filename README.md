@@ -98,7 +98,8 @@ Views link to each other and `l` follows the link, both directions:
   branch, or body).
 - From a **Linear issue** → the GitHub PRs attached to it.
 
-If there's more than one target, a picker appears. References that resolve to a
+A picker lists the targets (always, even for a single one, so navigation never
+happens without a prompt); pick one to follow it. References that resolve to a
 loaded item jump in-app; ones that don't (e.g. a merged PR, or a PR by someone
 else) open in the browser instead, marked with `↗`. References that resolve to
 nothing at all — like regex false-positives with no URL — are dropped.
