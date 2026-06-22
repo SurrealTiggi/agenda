@@ -77,7 +77,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case done:
 				ref := m.pickerRefs[m.picker.Index()]
 				m.picker, m.pickerRefs = nil, nil
-				m.followRef(ref)
+				return m, m.followRef(ref)
 			}
 			return m, nil
 		}
@@ -117,10 +117,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Follow):
 			// Follow a cross-reference: jump if there's one, pick if several.
 			if refs := m.currentRefs(); len(refs) == 1 {
-				m.followRef(refs[0])
-				return m, nil
+				return m, m.followRef(refs[0])
 			} else if len(refs) > 1 {
-				p := ui.NewPicker("Follow reference", refLabels(refs))
+				p := ui.NewPicker("Follow reference", m.pickerLabels(refs))
 				m.picker, m.pickerRefs = &p, refs
 				return m, nil
 			}
@@ -182,8 +181,10 @@ func (m Model) contentHeight() int {
 }
 
 // currentRefs is the cross-references the focused view exposes for its
-// selection, filtered to those a target view can actually resolve (so regex
-// false-positives never reach the footer or picker). nil if not a Referencer.
+// selection, filtered to those we can act on — either a loaded view resolves
+// them, or they carry a browser-fallback URL. This drops regex false-positives
+// (no resolver, no URL) while keeping links to items that aren't loaded. nil if
+// the view isn't a Referencer.
 func (m Model) currentRefs() []ui.Ref {
 	r, ok := m.views[m.current].(ui.Referencer)
 	if !ok {
@@ -191,14 +192,15 @@ func (m Model) currentRefs() []ui.Ref {
 	}
 	var out []ui.Ref
 	for _, ref := range r.Refs() {
-		if m.canResolve(ref) {
+		if m.resolves(ref) || ref.URL != "" {
 			out = append(out, ref)
 		}
 	}
 	return out
 }
 
-func (m Model) canResolve(ref ui.Ref) bool {
+// resolves reports whether a loaded view can select the ref's target.
+func (m Model) resolves(ref ui.Ref) bool {
 	for _, v := range m.views {
 		if t, ok := v.(ui.RefTarget); ok && t.RefKind() == ref.Kind && t.HasRef(ref.ID) {
 			return true
@@ -207,22 +209,29 @@ func (m Model) canResolve(ref ui.Ref) bool {
 	return false
 }
 
-// followRef switches to the view that handles ref.Kind and selects the target.
-func (m *Model) followRef(ref ui.Ref) {
+// followRef jumps to the ref's target if a view can resolve it, otherwise opens
+// its URL in the browser. Returns the command to run (nil for an in-app jump).
+func (m *Model) followRef(ref ui.Ref) tea.Cmd {
 	for i, v := range m.views {
-		if t, ok := v.(ui.RefTarget); ok && t.RefKind() == ref.Kind {
+		if t, ok := v.(ui.RefTarget); ok && t.RefKind() == ref.Kind && t.HasRef(ref.ID) {
 			t.SelectRef(ref.ID)
 			m.current = i
 			m.syncPreviewKey(true)
-			return
+			return nil
 		}
 	}
+	return ui.OpenURL(ref.URL) // unresolved → browser (no-op if URL is "")
 }
 
-func refLabels(refs []ui.Ref) []string {
+// pickerLabels annotates browser-bound refs with a ↗ so the user knows they
+// open externally rather than jumping in-app.
+func (m Model) pickerLabels(refs []ui.Ref) []string {
 	labels := make([]string, len(refs))
 	for i, r := range refs {
 		labels[i] = r.Label
+		if !m.resolves(r) {
+			labels[i] += "  ↗"
+		}
 	}
 	return labels
 }

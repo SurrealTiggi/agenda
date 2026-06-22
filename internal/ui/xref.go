@@ -11,6 +11,7 @@ type Ref struct {
 	Kind  string // which target view handles it, e.g. "linear", "pr"
 	ID    string // identifier to select in that view
 	Label string // human-facing label shown in the picker
+	URL   string // browser fallback, opened when no loaded view can resolve it
 }
 
 // Referencer is implemented by a view whose current selection links to items

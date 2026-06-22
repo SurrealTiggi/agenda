@@ -98,9 +98,10 @@ Views link to each other and `l` follows the link, both directions:
   branch, or body).
 - From a **Linear issue** → the GitHub PRs attached to it.
 
-If there's more than one target, a picker appears. Only references that
-actually resolve to a loaded item are offered, so noise (regex false-positives,
-PRs/issues that aren't in view) is filtered out.
+If there's more than one target, a picker appears. References that resolve to a
+loaded item jump in-app; ones that don't (e.g. a merged PR, or a PR by someone
+else) open in the browser instead, marked with `↗`. References that resolve to
+nothing at all — like regex false-positives with no URL — are dropped.
 
 The mechanism is generic: a view exposes links by implementing `Referencer`,
 and becomes a jump destination by implementing `RefTarget`. Adding a new link

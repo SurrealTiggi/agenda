@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os/exec"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -270,7 +269,7 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 		}
 		switch {
 		case key.Matches(msg, v.keys.Open):
-			return openURLCmd(v.list.Selected().URL)
+			return ui.OpenURL(v.list.Selected().URL)
 		case key.Matches(msg, v.keys.Copy):
 			return copyCmd(v.list.Selected().URL)
 		case key.Matches(msg, v.keys.Branch):
@@ -414,7 +413,7 @@ func parsePRRef(url string) (ui.Ref, bool) {
 	if m == nil {
 		return ui.Ref{}, false
 	}
-	return ui.Ref{Kind: "pr", ID: url, Label: "PR  " + m[1] + "#" + m[2]}, true
+	return ui.Ref{Kind: "pr", ID: url, Label: "PR  " + m[1] + "#" + m[2], URL: url}, true
 }
 
 // Refs implements ui.Referencer: the GitHub PRs attached to the selected issue.
@@ -444,25 +443,6 @@ func labelPills(labels []label) string {
 		pills = append(pills, hexStyle(l.Color).Render("● ")+l.Name)
 	}
 	return strings.Join(pills, "  ")
-}
-
-func openURLCmd(u string) tea.Cmd {
-	if u == "" {
-		return nil
-	}
-	return func() tea.Msg {
-		var c *exec.Cmd
-		switch runtime.GOOS {
-		case "darwin":
-			c = exec.Command("open", u)
-		case "windows":
-			c = exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
-		default:
-			c = exec.Command("xdg-open", u)
-		}
-		_ = c.Start()
-		return nil
-	}
 }
 
 func copyCmd(s string) tea.Cmd {
