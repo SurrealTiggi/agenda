@@ -10,7 +10,8 @@ tab between:
 - **Linear** — your assigned Linear issues
 
 Each is a distinct *view*; switch with `tab` / `shift+tab`. Every view shares
-the same two-line row layout, fuzzy filter, and scrollable markdown preview.
+the same two-line row layout, fuzzy filter, a scrollbar showing your position
+in the list, and a scrollable markdown preview.
 
 The network-backed views (PRs, Linear) cache their last results under
 `$XDG_CACHE_HOME/agenda`, so they paint instantly on launch and refresh in the
