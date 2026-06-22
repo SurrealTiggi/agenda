@@ -57,8 +57,9 @@ func (s session) Filter() string {
 }
 
 func (s session) Render(width int, selected bool) string {
-	// Glyph column: the tool badge, padded to a fixed width so titles align.
-	glyphs := s.toolStyle().Render(fmt.Sprintf("%-6s", s.Tool))
+	// Glyph column: the agent's Nerd Font icon (claude/codex/antigravity)
+	// instead of its spelled-out name.
+	glyphs := ui.AgentIcon(string(s.Tool))
 
 	cwd := shortenPath(s.Cwd)
 	right := yellow.Render(strconv.Itoa(s.Msgs)) + "  " + grey.Render(ui.Age(s.MTime))
@@ -243,6 +244,8 @@ func (v *View) PreviewView() string {
 	}
 
 	var b strings.Builder
+	b.WriteString(ui.AgentIcon(string(s.Tool)))
+	b.WriteString("  ")
 	b.WriteString(s.toolStyle().Bold(true).Render(strings.ToUpper(string(s.Tool))))
 	b.WriteString("  ")
 	b.WriteString(grey.Render(fmt.Sprintf("%s · %d msgs",
