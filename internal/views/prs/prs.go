@@ -358,6 +358,17 @@ func (v *View) Refs() []ui.Ref {
 	return refs
 }
 
+// RefKind / HasRef / SelectRef implement ui.RefTarget so other views (e.g.
+// Linear) can jump to a PR here. PRs are keyed by URL.
+func (v *View) RefKind() string { return "pr" }
+
+func matchURL(url string) func(pr) bool {
+	return func(p pr) bool { return p.URL == url }
+}
+
+func (v *View) HasRef(id string) bool    { return v.list.Any(matchURL(id)) }
+func (v *View) SelectRef(id string) bool { return v.list.Select(matchURL(id)) }
+
 func (v *View) openSelected() tea.Cmd {
 	p := v.list.Selected()
 	if p.URL == "" {

@@ -92,13 +92,20 @@ linear:
 
 ## Cross-references
 
-Views can link to each other. With a PR selected, `l` jumps to the Linear
-issue it references (detected from the title, branch, or body); if it
-references several, a picker appears. Only references that actually resolve to
-a loaded item are offered. The mechanism is generic — a view exposes links by
-implementing `Referencer`, and a view becomes a jump destination by
-implementing `RefTarget` — so more links (issue → its PRs, session → its repo)
-can be added without touching the core.
+Views link to each other and `l` follows the link, both directions:
+
+- From a **PR** → the Linear issue it references (detected from the title,
+  branch, or body).
+- From a **Linear issue** → the GitHub PRs attached to it.
+
+If there's more than one target, a picker appears. Only references that
+actually resolve to a loaded item are offered, so noise (regex false-positives,
+PRs/issues that aren't in view) is filtered out.
+
+The mechanism is generic: a view exposes links by implementing `Referencer`,
+and becomes a jump destination by implementing `RefTarget`. Adding a new link
+type (e.g. session → its repo's PRs) is just implementing those interfaces — no
+core changes.
 
 ## License
 

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -86,6 +87,12 @@ type issue struct {
 	Labels struct {
 		Nodes []label `json:"nodes"`
 	} `json:"labels"`
+	Attachments struct {
+		Nodes []struct {
+			URL        string `json:"url"`
+			SourceType string `json:"sourceType"`
+		} `json:"nodes"`
+	} `json:"attachments"`
 }
 
 func (i issue) Filter() string {
@@ -190,6 +197,7 @@ const graphqlQuery = `query {
         project { name }
         assignee { displayName }
         labels(first: 10) { nodes { name color } }
+        attachments(first: 20) { nodes { url sourceType } }
       }
     }
   }
@@ -396,6 +404,34 @@ func matchID(id string) func(issue) bool {
 
 func (v *View) HasRef(id string) bool    { return v.list.Any(matchID(id)) }
 func (v *View) SelectRef(id string) bool { return v.list.Select(matchID(id)) }
+
+// prURLRe captures "owner/repo" and the number from a GitHub PR URL.
+var prURLRe = regexp.MustCompile(`github\.com/([^/]+/[^/]+)/pull/(\d+)`)
+
+// parsePRRef turns a GitHub PR URL into a ui.Ref (Kind "pr", keyed by URL).
+func parsePRRef(url string) (ui.Ref, bool) {
+	m := prURLRe.FindStringSubmatch(url)
+	if m == nil {
+		return ui.Ref{}, false
+	}
+	return ui.Ref{Kind: "pr", ID: url, Label: "PR  " + m[1] + "#" + m[2]}, true
+}
+
+// Refs implements ui.Referencer: the GitHub PRs attached to the selected issue.
+func (v *View) Refs() []ui.Ref {
+	var refs []ui.Ref
+	seen := map[string]bool{}
+	for _, a := range v.list.Selected().Attachments.Nodes {
+		if a.SourceType != "github" {
+			continue
+		}
+		if ref, ok := parsePRRef(a.URL); ok && !seen[ref.ID] {
+			seen[ref.ID] = true
+			refs = append(refs, ref)
+		}
+	}
+	return refs
+}
 
 // --- helpers ----------------------------------------------------------------
 
