@@ -154,6 +154,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filter = &fm
 				return m, nil
 			}
+		default:
+			// Number keys 1..9 jump straight to that view (by tab position).
+			// Reached only after the modal/input-capture guards above, so a digit
+			// typed into a filter still types normally.
+			if i := viewIndexForKey(msg.String()); i >= 0 && i < len(m.views) {
+				m.current = i
+				m.syncPreviewKey(true)
+				return m, nil
+			}
 		}
 		// Anything else goes to the focused view.
 		return m.updateCurrent(msg)
@@ -403,6 +412,16 @@ func clamp(v, lo, hi int) int {
 	return min(max(v, lo), hi)
 }
 
+// viewIndexForKey maps a single-digit key string ("1".."9") to a 0-based view
+// index, or -1 if the key isn't a 1..9 digit. "1" → view 0, matching the tab
+// labels.
+func viewIndexForKey(s string) int {
+	if len(s) == 1 && s[0] >= '1' && s[0] <= '9' {
+		return int(s[0] - '1')
+	}
+	return -1
+}
+
 func (m Model) renderTabs() string {
 	labels := make([]string, len(m.views))
 	for i, v := range m.views {
@@ -410,7 +429,12 @@ func (m Model) renderTabs() string {
 		if i == m.current {
 			style = m.theme.tabActive
 		}
-		labels[i] = style.Render(v.Title())
+		// Prefix the 1-based index as a jump hint (matches the 1..9 hotkeys).
+		label := v.Title()
+		if i < 9 {
+			label = string(rune('1'+i)) + " " + label
+		}
+		labels[i] = style.Render(label)
 	}
 	row := lipgloss.JoinHorizontal(lipgloss.Bottom, labels...)
 	return m.theme.tabBar.Width(m.width).Render(row)
