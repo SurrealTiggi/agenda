@@ -6,6 +6,7 @@ func TestViewIndexForKey(t *testing.T) {
 	cases := map[string]int{
 		"1": 0, // "1" jumps to the first view
 		"2": 1,
+		"5": 4, // mid-range exercises the s[0]-'1' formula
 		"9": 8,
 		"0": -1, // 0 is not a view hotkey
 		"a": -1,

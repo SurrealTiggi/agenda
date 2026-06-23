@@ -93,6 +93,42 @@ func TestFilterModalNoLeakOffQueryRow(t *testing.T) {
 	}
 }
 
+func TestFilterModalVimNavOffQueryRow(t *testing.T) {
+	// j/k navigate when the cursor is off the query row (matching the list/picker).
+	m := NewFilterModal("x", "", []string{"repo", "branch"}, nil, false)
+	m.Update(tea.KeyPressMsg{Code: tea.KeyDown})        // query -> repo
+	m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})     // repo -> branch
+	m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})     // toggle branch off
+	if strings.Join(m.EnabledFields(), ",") != "repo" {
+		t.Errorf("EnabledFields() = %v, want [repo] (j moved to branch, space toggled it)", m.EnabledFields())
+	}
+	m.Update(tea.KeyPressMsg{Code: 'k', Text: "k"}) // branch -> repo
+	m.Update(tea.KeyPressMsg{Code: ' ', Text: " "}) // toggle repo off
+	if len(m.EnabledFields()) != 0 {
+		t.Errorf("EnabledFields() = %v, want [] (k moved back to repo, space toggled it)", m.EnabledFields())
+	}
+}
+
+func TestFilterModalJKTypeOnQueryRow(t *testing.T) {
+	// On the query row (cursor 0), j/k are literal characters, not navigation.
+	m := NewFilterModal("x", "", []string{"repo"}, nil, false)
+	typeRunes(&m, "jk")
+	if m.Query() != "jk" {
+		t.Errorf("Query() = %q, want jk (j/k type literally on the query row)", m.Query())
+	}
+}
+
+func TestFilterModalSpaceTypesOnQueryRow(t *testing.T) {
+	// Space on the query row is a literal space (it only toggles on toggle rows).
+	m := NewFilterModal("x", "", []string{"repo"}, nil, false)
+	typeRunes(&m, "a")
+	m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
+	typeRunes(&m, "b")
+	if m.Query() != "a b" {
+		t.Errorf("Query() = %q, want %q (space types on the query row)", m.Query(), "a b")
+	}
+}
+
 func TestFilterModalBackspaceMultibyte(t *testing.T) {
 	m := NewFilterModal("x", "café", []string{"repo"}, nil, false)
 	m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})

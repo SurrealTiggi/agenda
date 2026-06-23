@@ -62,15 +62,22 @@ func (m *FilterModal) Update(msg tea.Msg) (done, cancelled bool) {
 	case "esc", "ctrl+c":
 		return false, true
 	case "up":
-		if m.cursor > 0 {
-			m.cursor--
-		}
+		m.moveCursor(-1)
 		return false, false
 	case "down":
-		if m.cursor < m.lastRow() {
-			m.cursor++
-		}
+		m.moveCursor(1)
 		return false, false
+	case "k", "j":
+		// Vim navigation, but only off the query row — on the query row k/j are
+		// literal characters being typed into the query.
+		if !m.onQuery() {
+			if km.String() == "k" {
+				m.moveCursor(-1)
+			} else {
+				m.moveCursor(1)
+			}
+			return false, false
+		}
 	case " ", "space":
 		// Space toggles a toggle row; on the query row it's a literal space.
 		if !m.onQuery() {
@@ -84,18 +91,34 @@ func (m *FilterModal) Update(msg tea.Msg) (done, cancelled bool) {
 	if !m.onQuery() {
 		return false, false
 	}
-	switch km.String() {
-	case "backspace":
+	if km.String() == "backspace" {
 		if m.query != "" {
 			r := []rune(m.query)
 			m.query = string(r[:len(r)-1])
 		}
-	default:
-		if s := km.String(); len(s) == 1 {
-			m.query += s
+		return false, false
+	}
+	// Append the key's text — a letter, digit, space, etc. Non-text keys (arrows,
+	// …) have empty Text; control chars like Tab are ignored. Mirrors the inline
+	// `/` filter path in list.go so space and multibyte input behave the same.
+	if kp, ok := msg.(tea.KeyPressMsg); ok && kp.Text != "" {
+		if r := []rune(kp.Text)[0]; r >= 0x20 && r != 0x7f {
+			m.query += kp.Text
 		}
 	}
 	return false, false
+}
+
+// moveCursor steps the cursor by delta, clamped to the query row (0) and the
+// case-sensitive row (lastRow).
+func (m *FilterModal) moveCursor(delta int) {
+	m.cursor += delta
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if m.cursor > m.lastRow() {
+		m.cursor = m.lastRow()
+	}
 }
 
 // toggle flips the toggle row under the cursor (cursor is 1..lastRow here).
