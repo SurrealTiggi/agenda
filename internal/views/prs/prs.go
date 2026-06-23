@@ -100,6 +100,16 @@ func (p pr) Filter() string {
 	return fmt.Sprintf("%s #%d %s", p.repo(), p.Number, p.Title)
 }
 
+func (p pr) Fields() []ui.Field {
+	return []ui.Field{
+		{Name: "repo", Text: p.repo()},
+		{Name: "branch", Text: p.HeadRefName},
+		{Name: "title", Text: p.Title},
+		{Name: "description", Text: p.Body},
+		{Name: "author", Text: p.Author.Login},
+	}
+}
+
 // linearRefRe matches a Linear issue identifier (team key + number), e.g.
 // "SRE-4228" in a title or "sre-3686" in a branch name like
 // "orjan/sre-3686-add-foo". The team key is letters only, so version-ish
@@ -189,7 +199,7 @@ func (p pr) commentsCell() string {
 // indented to align under the metadata. The selected row gets an accent bar on
 // both lines (rather than a full-row background, which lipgloss's per-segment
 // resets would clobber).
-func (p pr) Render(width int, selected bool) string {
+func (p pr) Render(width int, selected bool, hl ui.Highlighter) string {
 	glyphs := p.stateIcon() + " " + p.ciIcon() + " " + p.reviewIcon()
 
 	// Right cluster: diff · comments · age.
@@ -208,7 +218,7 @@ func (p pr) Render(width int, selected bool) string {
 		styled += grey.Render(" · " + p.HeadRefName)
 	}
 
-	return ui.TwoLineRow(width, selected, glyphs, plain, styled, right, p.Title)
+	return ui.TwoLineRow(width, selected, glyphs, plain, styled, right, p.Title, hl)
 }
 
 // --- messages ---------------------------------------------------------------
@@ -579,6 +589,18 @@ func (v *View) Status() string {
 }
 
 func (v *View) InputActive() bool { return v.list.Filtering() }
+
+func (v *View) Fields() []string { return v.list.FieldNames() }
+
+func (v *View) FilterState() (string, []string, bool) {
+	return v.list.Query(), v.list.EnabledFields(), v.list.CaseSensitive()
+}
+
+func (v *View) SetFilter(query string, enabled []string, caseSensitive bool) {
+	v.list.SetEnabledFields(enabled)
+	v.list.SetCaseSensitive(caseSensitive)
+	v.list.SetQuery(query)
+}
 
 func (v *View) PreviewKey() string { return v.list.Selected().URL }
 

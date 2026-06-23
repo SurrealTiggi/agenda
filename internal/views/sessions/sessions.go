@@ -56,7 +56,15 @@ func (s session) Filter() string {
 	return fmt.Sprintf("%s %s %s", s.Tool, shortenPath(s.Cwd), s.Title)
 }
 
-func (s session) Render(width int, selected bool) string {
+func (s session) Fields() []ui.Field {
+	return []ui.Field{
+		{Name: "tool", Text: string(s.Tool)},
+		{Name: "cwd", Text: shortenPath(s.Cwd)},
+		{Name: "title", Text: s.Title},
+	}
+}
+
+func (s session) Render(width int, selected bool, hl ui.Highlighter) string {
 	// Glyph column: the agent's Nerd Font icon (claude/codex/antigravity)
 	// instead of its spelled-out name.
 	glyphs := ui.AgentIcon(string(s.Tool))
@@ -64,7 +72,7 @@ func (s session) Render(width int, selected bool) string {
 	cwd := shortenPath(s.Cwd)
 	right := yellow.Render(strconv.Itoa(s.Msgs)) + "  " + grey.Render(ui.Age(s.MTime))
 
-	return ui.TwoLineRow(width, selected, glyphs, cwd, cyan.Render(cwd), right, s.titleOr())
+	return ui.TwoLineRow(width, selected, glyphs, cwd, cyan.Render(cwd), right, s.titleOr(), hl)
 }
 
 // --- sorting ----------------------------------------------------------------
@@ -291,6 +299,18 @@ func (v *View) Bindings() []key.Binding {
 func (v *View) Status() string { return grey.Render(v.statusText()) }
 
 func (v *View) InputActive() bool { return v.list.Filtering() }
+
+func (v *View) Fields() []string { return v.list.FieldNames() }
+
+func (v *View) FilterState() (string, []string, bool) {
+	return v.list.Query(), v.list.EnabledFields(), v.list.CaseSensitive()
+}
+
+func (v *View) SetFilter(query string, enabled []string, caseSensitive bool) {
+	v.list.SetEnabledFields(enabled)
+	v.list.SetCaseSensitive(caseSensitive)
+	v.list.SetQuery(query)
+}
 
 func (v *View) PreviewKey() string { return v.list.Selected().Path }
 

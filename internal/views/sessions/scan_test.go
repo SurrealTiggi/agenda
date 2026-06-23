@@ -108,6 +108,46 @@ func TestParseClaude(t *testing.T) {
 	}
 }
 
+func TestParseClaudeCustomTitleWins(t *testing.T) {
+	dir := t.TempDir()
+	// A renamed session: /rename writes a custom-title record. It must override
+	// the ai-title (which claude -r ignores once you've renamed).
+	content := `{"type":"user","cwd":"/home/u/proj","message":{"content":"first prompt"}}
+{"type":"ai-title","aiTitle":"Generated Title"}
+{"type":"custom-title","customTitle":"my renamed session","sessionId":"abc123"}
+`
+	m := parseClaude(writeFile(t, dir, "abc123.jsonl", content))
+	if m.Title != "my renamed session" {
+		t.Errorf("Title = %q, want custom-title to override ai-title", m.Title)
+	}
+}
+
+func TestParseClaudeLastCustomTitleWins(t *testing.T) {
+	dir := t.TempDir()
+	// custom-title is re-appended on each load and can change on a later rename;
+	// the most recent one wins.
+	content := `{"type":"custom-title","customTitle":"old name"}
+{"type":"ai-title","aiTitle":"Generated Title"}
+{"type":"custom-title","customTitle":"new name"}
+`
+	m := parseClaude(writeFile(t, dir, "s.jsonl", content))
+	if m.Title != "new name" {
+		t.Errorf("Title = %q, want last custom-title", m.Title)
+	}
+}
+
+func TestParseClaudeFallsBackToAiTitleWhenNoCustom(t *testing.T) {
+	dir := t.TempDir()
+	// No custom-title -> ai-title still wins (unchanged behavior).
+	content := `{"type":"user","message":{"content":"a prompt"}}
+{"type":"ai-title","aiTitle":"Generated Title"}
+`
+	m := parseClaude(writeFile(t, dir, "s.jsonl", content))
+	if m.Title != "Generated Title" {
+		t.Errorf("Title = %q, want ai-title when no custom-title", m.Title)
+	}
+}
+
 func TestParseClaudeFallsBackToLastPrompt(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"type":"user","message":{"content":"only prompt"}}
@@ -116,6 +156,18 @@ func TestParseClaudeFallsBackToLastPrompt(t *testing.T) {
 	m := parseClaude(writeFile(t, dir, "s.jsonl", content))
 	if m.Title != "latest prompt" {
 		t.Errorf("Title = %q, want last user prompt when no ai-title", m.Title)
+	}
+}
+
+func TestParseClaudeFallsBackToFirstPrompt(t *testing.T) {
+	dir := t.TempDir()
+	// A single user prompt and no titles: first == last, so the first-prompt
+	// fallback is what surfaces.
+	content := `{"type":"user","message":{"content":"only prompt"}}
+`
+	m := parseClaude(writeFile(t, dir, "s.jsonl", content))
+	if m.Title != "only prompt" {
+		t.Errorf("Title = %q, want the sole user prompt", m.Title)
 	}
 }
 

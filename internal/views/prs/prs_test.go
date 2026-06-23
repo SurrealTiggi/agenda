@@ -5,6 +5,36 @@ import (
 	"testing"
 )
 
+func TestPRFields(t *testing.T) {
+	p := pr{
+		Title:       "Add oauth",
+		HeadRefName: "feat/oauth",
+		Body:        "body text",
+	}
+	p.Repository.NameWithOwner = "sanity-io/agenda"
+	p.Author.Login = "tiggi"
+
+	want := map[string]string{
+		"repo":        "sanity-io/agenda",
+		"branch":      "feat/oauth",
+		"title":       "Add oauth",
+		"description": "body text",
+		"author":      "tiggi",
+	}
+	got := map[string]string{}
+	for _, f := range p.Fields() {
+		got[f.Name] = f.Text
+	}
+	for name, text := range want {
+		if got[name] != text {
+			t.Errorf("Fields()[%q] = %q, want %q", name, got[name], text)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("Fields() returned %d fields, want %d", len(got), len(want))
+	}
+}
+
 func TestLinearRefs(t *testing.T) {
 	cases := []struct {
 		name string
