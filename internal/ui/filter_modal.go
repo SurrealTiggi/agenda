@@ -82,7 +82,8 @@ func (m *FilterModal) Update(msg tea.Msg) (done, cancelled bool) {
 	switch km.String() {
 	case "backspace":
 		if m.query != "" {
-			m.query = m.query[:len(m.query)-1]
+			r := []rune(m.query)
+			m.query = string(r[:len(r)-1])
 		}
 	default:
 		if s := km.String(); len(s) == 1 {

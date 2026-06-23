@@ -61,3 +61,20 @@ func TestFilterModalBackspace(t *testing.T) {
 		t.Errorf("Query() = %q after backspace, want a", m.Query())
 	}
 }
+
+func TestFilterModalNoLeakWhileListFocused(t *testing.T) {
+	m := NewFilterModal("x", "", []string{"repo"}, nil, false)
+	m.Update(tea.KeyPressMsg{Code: tea.KeyTab}) // focus the field list
+	m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	if m.Query() != "" {
+		t.Errorf("char leaked into query while list focused: Query()=%q, want empty", m.Query())
+	}
+}
+
+func TestFilterModalBackspaceMultibyte(t *testing.T) {
+	m := NewFilterModal("x", "café", []string{"repo"}, nil, false)
+	m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	if m.Query() != "caf" {
+		t.Errorf("Query()=%q after backspace, want caf", m.Query())
+	}
+}
