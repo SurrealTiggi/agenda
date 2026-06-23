@@ -195,14 +195,15 @@ func scanLines(path string, fn func(line []byte)) error {
 }
 
 func parseClaude(path string) meta {
-	var cwd, first, last, aiTitle string
+	var cwd, first, last, aiTitle, customTitle string
 	n := 0
 	_ = scanLines(path, func(line []byte) {
 		var d struct {
-			Type    string `json:"type"`
-			Cwd     string `json:"cwd"`
-			AiTitle string `json:"aiTitle"`
-			Message struct {
+			Type        string `json:"type"`
+			Cwd         string `json:"cwd"`
+			AiTitle     string `json:"aiTitle"`
+			CustomTitle string `json:"customTitle"`
+			Message     struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 		}
@@ -213,6 +214,12 @@ func parseClaude(path string) meta {
 			cwd = d.Cwd
 		}
 		switch d.Type {
+		case "custom-title":
+			// `/rename` writes this; the most recent one wins. It's the name
+			// claude -r shows, so it overrides the AI-generated title.
+			if d.CustomTitle != "" {
+				customTitle = cleanText(d.CustomTitle)
+			}
 		case "ai-title":
 			if d.AiTitle != "" {
 				aiTitle = cleanText(d.AiTitle)
@@ -228,7 +235,11 @@ func parseClaude(path string) meta {
 			}
 		}
 	})
-	title := aiTitle
+	// Precedence: custom (renamed) → AI-generated → last prompt → first prompt.
+	title := customTitle
+	if title == "" {
+		title = aiTitle
+	}
 	if title == "" {
 		title = last
 	}
