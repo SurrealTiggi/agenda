@@ -146,6 +146,16 @@ func (i issue) Filter() string {
 	return fmt.Sprintf("%s %s %s %s", i.Identifier, i.State.Name, i.Project.Name, i.Title)
 }
 
+func (i issue) Fields() []ui.Field {
+	return []ui.Field{
+		{Name: "id", Text: i.Identifier},
+		{Name: "status", Text: i.State.Name},
+		{Name: "title", Text: i.Title},
+		{Name: "project", Text: i.Project.Name},
+		{Name: "assignee", Text: i.Assignee.DisplayName},
+	}
+}
+
 // priorityCell renders a one-glyph, color-coded priority indicator. Linear:
 // 0 none, 1 urgent, 2 high, 3 medium, 4 low.
 func (i issue) priorityCell() string {
@@ -163,7 +173,7 @@ func (i issue) priorityCell() string {
 	}
 }
 
-func (i issue) Render(width int, selected bool) string {
+func (i issue) Render(width int, selected bool, hl ui.Highlighter) string {
 	glyphs := i.priorityCell()
 
 	// Metadata: state · identifier (· project).
@@ -176,7 +186,7 @@ func (i issue) Render(width int, selected bool) string {
 
 	right := grey.Render(ui.Age(i.UpdatedAt))
 
-	return ui.TwoLineRow(width, selected, glyphs, plain, styled, right, i.Title)
+	return ui.TwoLineRow(width, selected, glyphs, plain, styled, right, i.Title, hl)
 }
 
 // --- messages ---------------------------------------------------------------
@@ -471,6 +481,18 @@ func (v *View) Bindings() []key.Binding {
 func (v *View) Status() string { return grey.Render(v.statusText()) }
 
 func (v *View) InputActive() bool { return v.list.Filtering() }
+
+func (v *View) Fields() []string { return v.list.FieldNames() }
+
+func (v *View) FilterState() (string, []string, bool) {
+	return v.list.Query(), v.list.EnabledFields(), v.list.CaseSensitive()
+}
+
+func (v *View) SetFilter(query string, enabled []string, caseSensitive bool) {
+	v.list.SetEnabledFields(enabled)
+	v.list.SetCaseSensitive(caseSensitive)
+	v.list.SetQuery(query)
+}
 
 func (v *View) PreviewKey() string { return v.list.Selected().Identifier }
 
