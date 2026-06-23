@@ -38,6 +38,9 @@ type Model struct {
 	// cross-reference picker (nil unless the modal is open).
 	picker     *ui.Picker
 	pickerRefs []ui.Ref
+
+	// field-scoped filter modal (nil unless open).
+	filter *ui.FilterModal
 }
 
 // New builds the root model from config. Views are constructed by the caller
@@ -86,6 +89,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		// While the filter modal is open it captures all keys.
+		if m.filter != nil {
+			done, cancelled := m.filter.Update(msg)
+			switch {
+			case cancelled:
+				m.filter = nil
+			case done:
+				if f, ok := m.views[m.current].(filterable); ok {
+					f.SetFilter(m.filter.Query(), m.filter.EnabledFields(), m.filter.CaseSensitive())
+				}
+				m.filter = nil
+				m.syncPreviewKey(false)
+			}
+			return m, nil
+		}
 		// While the focused view is capturing text input, route everything to
 		// it (except a hard ctrl+c quit) so global bindings don't steal keys.
 		if len(m.views) > 0 && m.views[m.current].InputActive() {
@@ -129,6 +147,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			// No references: fall through to the view.
+		case key.Matches(msg, m.keys.Filter):
+			if f, ok := m.views[m.current].(filterable); ok && !m.views[m.current].InputActive() {
+				query, enabled, cs := f.FilterState()
+				fm := ui.NewFilterModal("Filter "+m.views[m.current].Title(), query, f.Fields(), enabled, cs)
+				m.filter = &fm
+				return m, nil
+			}
 		}
 		// Anything else goes to the focused view.
 		return m.updateCurrent(msg)
@@ -183,6 +208,13 @@ func (m *Model) scrollPreview(delta int) {
 
 func (m Model) contentHeight() int {
 	return max(1, m.height-tabBarHeight-footerHeight)
+}
+
+// filterable is implemented by views that support the scoped filter popup.
+type filterable interface {
+	Fields() []string
+	FilterState() (string, []string, bool)
+	SetFilter(query string, enabled []string, caseSensitive bool)
 }
 
 // currentRefs is the cross-references the focused view exposes for its
@@ -318,6 +350,17 @@ func (m Model) View() tea.View {
 		).Render()
 	}
 
+	// Composite the filter modal centered over the content, if open.
+	if m.filter != nil {
+		box := m.filter.View()
+		x := max(0, (m.width-lipgloss.Width(box))/2)
+		y := max(0, (m.height-lipgloss.Height(box))/2)
+		content = lipgloss.NewCompositor(
+			lipgloss.NewLayer(content),
+			lipgloss.NewLayer(box).X(x).Y(y).Z(1),
+		).Render()
+	}
+
 	v.Content = content
 	return v
 }
@@ -383,7 +426,7 @@ func (m Model) renderFooter() string {
 		bindings = append(bindings, m.keys.Follow)
 	}
 	bindings = append(bindings,
-		m.keys.NextView, m.keys.PreviewUp, m.keys.Refresh, m.keys.Quit)
+		m.keys.Filter, m.keys.NextView, m.keys.PreviewUp, m.keys.Refresh, m.keys.Quit)
 
 	first := true
 	for _, bnd := range bindings {
