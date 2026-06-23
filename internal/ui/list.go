@@ -5,6 +5,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -423,16 +424,38 @@ func Scrollbar(height, total, visible, offset int) []string {
 	return out
 }
 
-// FilterLine renders the active filter prompt (for a view to show in a header).
+// FilterLine renders the active filter prompt for a view header: the scoped
+// fields (when not all-on), the query, a case marker, and matched/total count.
+// Returns "" when there's no filter and we're not editing one.
 func (l *List[T]) FilterLine() string {
 	if !l.filtering && l.query == "" {
 		return ""
 	}
+	faintStyle := lipgloss.NewStyle().Faint(true)
+
+	var prefix string
+	if scoped := l.EnabledFields(); len(scoped) > 0 {
+		prefix = strings.Join(scoped, "+") + ": "
+	} else {
+		prefix = "/" // all-fields quick filter
+	}
+
 	cursor := ""
 	if l.filtering {
 		cursor = "█"
 	}
-	return lipgloss.NewStyle().Faint(true).Render("/"+l.query) + cursor
+
+	marker := ""
+	if l.caseSensitive {
+		marker = " Aa"
+	}
+
+	count := ""
+	if l.query != "" {
+		count = fmt.Sprintf("  %d/%d", l.Len(), l.Total())
+	}
+
+	return faintStyle.Render(prefix+l.query) + cursor + faintStyle.Render(marker+count)
 }
 
 // --- helpers ---------------------------------------------------------------

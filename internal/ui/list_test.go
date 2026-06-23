@@ -273,3 +273,32 @@ func TestListEnabledFields(t *testing.T) {
 		t.Errorf("EnabledFields() after nil = %v, want empty (all on)", got)
 	}
 }
+
+func TestFilterLine(t *testing.T) {
+	l := NewList[fieldItem]()
+	l.SetItems([]fieldItem{
+		{repo: "agenda", title: "add oauth"},
+		{repo: "oauth-lib", title: "bump"},
+	})
+
+	// No filter, not filtering: empty line.
+	if got := l.FilterLine(); got != "" {
+		t.Errorf("idle FilterLine = %q, want empty", got)
+	}
+
+	// Scoped query shows the field names, the query, and N/Total.
+	l.SetEnabledFields([]string{"repo"})
+	l.SetQuery("oauth")
+	got := l.FilterLine()
+	for _, want := range []string{"repo", "oauth", "1/2"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("FilterLine = %q, want it to contain %q", got, want)
+		}
+	}
+
+	// Case-sensitive adds an "Aa" marker.
+	l.SetCaseSensitive(true)
+	if got := l.FilterLine(); !strings.Contains(got, "Aa") {
+		t.Errorf("case-sensitive FilterLine = %q, want it to contain Aa", got)
+	}
+}
