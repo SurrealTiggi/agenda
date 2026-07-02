@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -168,6 +169,39 @@ func TestParseClaudeFallsBackToFirstPrompt(t *testing.T) {
 	m := parseClaude(writeFile(t, dir, "s.jsonl", content))
 	if m.Title != "only prompt" {
 		t.Errorf("Title = %q, want the sole user prompt", m.Title)
+	}
+}
+
+func TestParseClaudeComputesCostAndModel(t *testing.T) {
+	dir := t.TempDir()
+	// Two assistant messages carry usage + model. Opus 4.x rates ($5/$25 in/out,
+	// $0.625 cache-read, $6.25 cache-write per 1M).
+	// Totals: in 2_000_000, out 400_000, cacheRead 8_000_000, cacheWrite 1_000_000
+	// cost = 2*5 + 0.4*25 + 8*0.625 + 1*6.25 = 10 + 10 + 5 + 6.25 = 31.25
+	content := `{"type":"user","cwd":"/home/u/proj","message":{"content":"hi"}}
+{"type":"assistant","message":{"model":"claude-opus-4-8","content":"a","usage":{"input_tokens":1000000,"output_tokens":200000,"cache_read_input_tokens":4000000,"cache_creation_input_tokens":500000}}}
+{"type":"assistant","message":{"model":"claude-opus-4-8","content":"b","usage":{"input_tokens":1000000,"output_tokens":200000,"cache_read_input_tokens":4000000,"cache_creation_input_tokens":500000}}}
+`
+	m := parseClaude(writeFile(t, dir, "abc123.jsonl", content))
+	if m.Model != "claude-opus-4-8" {
+		t.Errorf("Model = %q, want claude-opus-4-8", m.Model)
+	}
+	if math.Abs(m.Cost-31.25) > 1e-6 {
+		t.Errorf("Cost = %v, want 31.25", m.Cost)
+	}
+}
+
+func TestParseClaudeNoUsageZeroCost(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"type":"user","cwd":"/home/u/proj","message":{"content":"hi"}}
+{"type":"assistant","message":{"content":"no usage here"}}
+`
+	m := parseClaude(writeFile(t, dir, "s.jsonl", content))
+	if m.Cost != 0 {
+		t.Errorf("Cost = %v, want 0 when no usage", m.Cost)
+	}
+	if m.Model != "" {
+		t.Errorf("Model = %q, want empty when no model", m.Model)
 	}
 }
 

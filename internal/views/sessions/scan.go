@@ -36,6 +36,8 @@ type meta struct {
 	Msgs      int       `json:"msgs"`
 	SessionID string    `json:"session_id"`
 	Mentions  []mention `json:"mentions"`
+	Model     string    `json:"model"` // Claude only; "" for other tools
+	Cost      float64   `json:"cost"`  // estimated USD; 0 when not derivable
 	// LastTS is the timestamp of the last record in the transcript, i.e. when
 	// the conversation actually ended. Zero when the format carries no
 	// timestamps (Antigravity) or the file is empty.
@@ -225,7 +227,8 @@ func scanLines(path string, fn func(line []byte)) error {
 }
 
 func parseClaude(path string) meta {
-	var cwd, first, last, aiTitle, customTitle, lastTS string
+	var cwd, first, last, aiTitle, customTitle, lastTS, model string
+	var inTok, outTok, cacheRead, cacheWrite int
 	n := 0
 	_ = scanLines(path, func(line []byte) {
 		var d struct {
@@ -235,7 +238,14 @@ func parseClaude(path string) meta {
 			CustomTitle string `json:"customTitle"`
 			Timestamp   string `json:"timestamp"`
 			Message     struct {
+				Model   string          `json:"model"`
 				Content json.RawMessage `json:"content"`
+				Usage   struct {
+					InputTokens              int `json:"input_tokens"`
+					OutputTokens             int `json:"output_tokens"`
+					CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+					CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+				} `json:"usage"`
 			} `json:"message"`
 		}
 		if json.Unmarshal(line, &d) != nil {
@@ -259,6 +269,14 @@ func parseClaude(path string) meta {
 			if d.AiTitle != "" {
 				aiTitle = cleanText(d.AiTitle)
 			}
+		case "assistant":
+			if model == "" && d.Message.Model != "" {
+				model = d.Message.Model
+			}
+			inTok += d.Message.Usage.InputTokens
+			outTok += d.Message.Usage.OutputTokens
+			cacheRead += d.Message.Usage.CacheReadInputTokens
+			cacheWrite += d.Message.Usage.CacheCreationInputTokens
 		case "user":
 			text := cleanText(textFromContent(d.Message.Content))
 			if isRealUserText(text) {
@@ -281,7 +299,15 @@ func parseClaude(path string) meta {
 	if title == "" {
 		title = first
 	}
-	return meta{Cwd: cwd, Title: truncTitle(title), Msgs: n, SessionID: stem(path), LastTS: parseTS(lastTS)}
+	return meta{
+		Cwd:       cwd,
+		Title:     truncTitle(title),
+		Msgs:      n,
+		SessionID: stem(path),
+		Model:     model,
+		Cost:      costUSD(inTok, outTok, cacheRead, cacheWrite, model),
+		LastTS:    parseTS(lastTS),
+	}
 }
 
 var uuidRe = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
