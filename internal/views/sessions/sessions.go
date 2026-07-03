@@ -25,13 +25,14 @@ import (
 func fg(c string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(c)) }
 
 var (
-	magenta = fg("5")
-	green   = fg("2")
-	blue    = fg("4")
-	cyan    = fg("6")
-	yellow  = fg("3")
-	grey    = fg("8")
-	faint   = lipgloss.NewStyle().Faint(true)
+	magenta   = fg("5")
+	green     = fg("2")
+	blue      = fg("4")
+	cyan      = fg("6")
+	yellow    = fg("3")
+	grey      = fg("8")
+	faint     = lipgloss.NewStyle().Faint(true)
+	costStyle = green.Bold(true)
 )
 
 func (s session) toolStyle() lipgloss.Style {
@@ -53,7 +54,7 @@ func (s session) titleOr() string {
 }
 
 func (s session) Filter() string {
-	return fmt.Sprintf("%s %s %s", s.Tool, shortenPath(s.Cwd), s.Title)
+	return fmt.Sprintf("%s %s %s %s", s.Tool, shortenPath(s.Cwd), s.Title, s.Model)
 }
 
 func (s session) Fields() []ui.Field {
@@ -61,6 +62,7 @@ func (s session) Fields() []ui.Field {
 		{Name: "tool", Text: string(s.Tool)},
 		{Name: "cwd", Text: shortenPath(s.Cwd)},
 		{Name: "title", Text: s.Title},
+		{Name: "model", Text: s.Model},
 	}
 }
 
@@ -71,6 +73,9 @@ func (s session) Render(width int, selected bool, hl ui.Highlighter) string {
 
 	cwd := shortenPath(s.Cwd)
 	right := yellow.Render(strconv.Itoa(s.Msgs)) + "  " + grey.Render(ui.Age(s.Updated))
+	if c := fmtCost(s.Cost); c != "" {
+		right = costStyle.Render(c) + "  " + right
+	}
 
 	return ui.TwoLineRow(width, selected, glyphs, cwd, cyan.Render(cwd), right, s.titleOr(), hl)
 }
@@ -274,8 +279,18 @@ func (v *View) PreviewView() string {
 	b.WriteString("  ")
 	b.WriteString(s.toolStyle().Bold(true).Render(strings.ToUpper(string(s.Tool))))
 	b.WriteString("  ")
-	b.WriteString(grey.Render(fmt.Sprintf("%s · %d msgs",
-		s.Updated.Format("2006-01-02 15:04"), s.Msgs)))
+	header := fmt.Sprintf("%s · %d msgs", s.Updated.Format("2006-01-02 15:04"), s.Msgs)
+	if s.Model != "" {
+		header += " · " + s.Model
+	}
+	b.WriteString(grey.Render(header))
+	b.WriteString("\n")
+	cost := fmtCost(s.Cost)
+	if cost == "" {
+		cost = "–"
+	}
+	b.WriteString(grey.Render("cost: "))
+	b.WriteString(costStyle.Render(cost))
 	b.WriteString("\n")
 	b.WriteString(cyan.Render(shortenPath(s.Cwd)))
 	b.WriteString("\n")
