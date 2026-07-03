@@ -6,7 +6,8 @@ A terminal dashboard that unifies the things you keep checking into one TUI you
 tab between:
 
 - **PRs** — your open GitHub pull requests
-- **Sessions** — your local agent sessions (Claude Code, Codex, Antigravity)
+- **Sessions** — your local agent sessions (Claude Code, Codex, Antigravity),
+  with the estimated cost and model for Claude sessions
 - **Linear** — your assigned Linear issues
 
 Each is a distinct *view*; switch with `tab` / `shift+tab`. Every view shares
