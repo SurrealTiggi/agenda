@@ -335,9 +335,9 @@ func TestScanMentions(t *testing.T) {
 func TestSortSessions(t *testing.T) {
 	base := time.Now()
 	in := []session{
-		{meta: meta{Cwd: "/b", Msgs: 1}, Tool: toolCodex, Updated: base.Add(-2 * time.Hour)},
-		{meta: meta{Cwd: "/a", Msgs: 9}, Tool: toolClaude, Updated: base.Add(-1 * time.Hour)},
-		{meta: meta{Cwd: "/c", Msgs: 5}, Tool: toolClaude, Updated: base.Add(-3 * time.Hour)},
+		{meta: meta{Cwd: "/b", Msgs: 1, Cost: 12.50}, Tool: toolCodex, Updated: base.Add(-2 * time.Hour)},
+		{meta: meta{Cwd: "/a", Msgs: 9, Cost: 0.30}, Tool: toolClaude, Updated: base.Add(-1 * time.Hour)},
+		{meta: meta{Cwd: "/c", Msgs: 5, Cost: 3.75}, Tool: toolClaude, Updated: base.Add(-3 * time.Hour)},
 	}
 
 	recent := sortSessions(in, sortRecent, false)
@@ -351,6 +351,10 @@ func TestSortSessions(t *testing.T) {
 	byCwd := sortSessions(in, sortCwd, false)
 	if byCwd[0].Cwd != "/a" || byCwd[2].Cwd != "/c" {
 		t.Errorf("sortCwd order = %q..%q, want /a../c", byCwd[0].Cwd, byCwd[2].Cwd)
+	}
+	cost := sortSessions(in, sortCost, false)
+	if cost[0].Cost != 12.50 || cost[2].Cost != 0.30 {
+		t.Errorf("sortCost order = %.2f..%.2f, want 12.50..0.30 (highest first)", cost[0].Cost, cost[2].Cost)
 	}
 	// Original slice must be untouched (sortSessions copies).
 	if in[0].Cwd != "/b" {

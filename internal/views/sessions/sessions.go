@@ -89,11 +89,13 @@ const (
 	sortCwd
 	sortTool
 	sortMsgs
+	sortCost
 )
 
-var sortOrder = []sortMode{sortRecent, sortCwd, sortTool, sortMsgs}
+var sortOrder = []sortMode{sortRecent, sortCwd, sortTool, sortMsgs, sortCost}
 var sortName = map[sortMode]string{
-	sortRecent: "recent", sortCwd: "cwd", sortTool: "tool", sortMsgs: "msgs",
+	sortRecent: "recent", sortCwd: "cwd", sortTool: "tool",
+	sortMsgs: "msgs", sortCost: "cost",
 }
 
 // sortSessions returns a sorted copy of in. When rev is set the comparison is
@@ -118,6 +120,11 @@ func sortSessions(in []session, mode sortMode, rev bool) []session {
 			return a.Updated.After(b.Updated)
 		case sortMsgs:
 			return a.Msgs > b.Msgs
+		case sortCost:
+			if a.Cost != b.Cost {
+				return a.Cost > b.Cost // most expensive first
+			}
+			return a.Updated.After(b.Updated)
 		default: // recent
 			return a.Updated.After(b.Updated)
 		}

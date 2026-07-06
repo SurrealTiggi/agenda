@@ -111,8 +111,8 @@ then the case-sensitive row. `1`…`9` jump straight to a view by its tab positi
   caching parsed metadata by file signature. Each agent is shown as a Nerd Font
   icon (claude = robot, codex = code, antigravity = rocket) rather than its
   name. `enter` resumes the selected session in its original directory; `s`
-  cycles sort (recent / cwd / tool / msgs). Originally a Python tool, ported to
-  Go.
+  cycles sort (recent / cwd / tool / msgs / cost). Originally a Python tool,
+  ported to Go.
 - **Linear** — issues assigned to you (active states), via the Linear GraphQL
   API. Preview shows status, priority, labels, branch name, and the description.
   `s` cycles sort (date / status); status groups by workflow state — in progress,
