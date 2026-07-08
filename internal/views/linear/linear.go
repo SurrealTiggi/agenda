@@ -468,6 +468,9 @@ func (v *View) applySort() {
 	v.list.SetItems(sortIssues(v.raw, v.sort, v.rev))
 }
 
+// ScrollList moves the list selection by n rows (mouse wheel).
+func (v *View) ScrollList(n int) { v.list.ScrollBy(n) }
+
 func (v *View) SetSize(listW, prevW, h int) {
 	v.listW, v.prevW, v.height = listW, prevW, h
 	v.list.SetSize(listW, max(1, h-1))
