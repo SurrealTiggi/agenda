@@ -2,9 +2,11 @@ package sessions
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -178,7 +180,7 @@ func TestParseClaudeComputesCostAndModel(t *testing.T) {
 	// $0.625 cache-read, $6.25 cache-write per 1M).
 	// Totals: in 2_000_000, out 400_000, cacheRead 8_000_000, cacheWrite 1_000_000
 	// cost = 2*5 + 0.4*25 + 8*0.625 + 1*6.25 = 10 + 10 + 5 + 6.25 = 31.25
-	content := `{"type":"user","cwd":"/home/u/proj","message":{"content":"hi"}}
+	content := `{"type":"user","cwd":"/home/u/proj","entrypoint":"cli","message":{"content":"hi"}}
 {"type":"assistant","message":{"model":"claude-opus-4-8","content":"a","usage":{"input_tokens":1000000,"output_tokens":200000,"cache_read_input_tokens":4000000,"cache_creation_input_tokens":500000}}}
 {"type":"assistant","message":{"model":"claude-opus-4-8","content":"b","usage":{"input_tokens":1000000,"output_tokens":200000,"cache_read_input_tokens":4000000,"cache_creation_input_tokens":500000}}}
 `
@@ -188,6 +190,55 @@ func TestParseClaudeComputesCostAndModel(t *testing.T) {
 	}
 	if math.Abs(m.Cost-31.25) > 1e-6 {
 		t.Errorf("Cost = %v, want 31.25", m.Cost)
+	}
+	if m.Entrypoint != "cli" {
+		t.Errorf("Entrypoint = %q, want cli", m.Entrypoint)
+	}
+}
+
+func TestParseClaudeCapturesSDKEntrypoint(t *testing.T) {
+	dir := t.TempDir()
+	// Programmatic sessions carry entrypoint "sdk-py" (security-review, /code-review, etc.).
+	content := `{"type":"queue-operation","entrypoint":"sdk-py","content":"Review this change for security vulnerabilities."}
+{"type":"user","message":{"content":"Review this change for security vulnerabilities."}}
+`
+	m := parseClaude(writeFile(t, dir, "s.jsonl", content))
+	if m.Entrypoint != "sdk-py" {
+		t.Errorf("Entrypoint = %q, want sdk-py", m.Entrypoint)
+	}
+}
+
+func TestIsAgent(t *testing.T) {
+	cases := map[string]bool{
+		"cli":    false, // interactive
+		"sdk-py": true,  // programmatic
+		"":       false, // non-Claude tools (no entrypoint)
+	}
+	for ep, want := range cases {
+		s := session{meta: meta{Entrypoint: ep}}
+		if got := s.isAgent(); got != want {
+			t.Errorf("isAgent(entrypoint=%q) = %v, want %v", ep, got, want)
+		}
+	}
+}
+
+func TestApplyViewHidesAgents(t *testing.T) {
+	v := New(nil)
+	v.raw = []session{
+		{meta: meta{SessionID: "you1", Entrypoint: "cli", Cost: 5}, Tool: toolClaude, Updated: time.Now()},
+		{meta: meta{SessionID: "agent1", Entrypoint: "sdk-py", Cost: 3}, Tool: toolClaude, Updated: time.Now()},
+		{meta: meta{SessionID: "codex1", Cost: 0}, Tool: toolCodex, Updated: time.Now()},
+	}
+	// Default: agents hidden.
+	v.applyView()
+	if got := v.list.Total(); got != 2 {
+		t.Errorf("hidden: list total = %d, want 2 (agent excluded)", got)
+	}
+	// Toggle on: all shown.
+	v.showAgents = true
+	v.applyView()
+	if got := v.list.Total(); got != 3 {
+		t.Errorf("shown: list total = %d, want 3", got)
 	}
 }
 
@@ -291,6 +342,76 @@ func TestConversationTurnsClaude(t *testing.T) {
 		if turns[i] != w {
 			t.Errorf("turn %d = %+v, want %+v", i, turns[i], w)
 		}
+	}
+}
+
+func TestPreviewWindowing(t *testing.T) {
+	// A session file with 20 user turns; "needle" only in turn 3.
+	dir := t.TempDir()
+	var lines []string
+	for i := 0; i < 20; i++ {
+		txt := fmt.Sprintf("turn %d body", i)
+		if i == 3 {
+			txt = "turn 3 has the needle here"
+		}
+		lines = append(lines, fmt.Sprintf(`{"type":"user","message":{"content":%q}}`, txt))
+	}
+	path := writeFile(t, dir, "s.jsonl", strings.Join(lines, "\n")+"\n")
+	// Body must contain the query so the row survives the list filter (as it would
+	// in the real app — the body is why the session matches).
+	s := session{meta: meta{SessionID: "s", Body: "turn 3 has the needle here"}, Tool: toolClaude, Path: path}
+
+	v := New(nil)
+	v.list.SetItems([]session{s})
+	v.list.SetEnabledFields([]string{"text"}) // scope to body so 'needle' matches it
+
+	// No query: default window shows the last maxTurns, with an "earlier turns"
+	// marker for the hidden ones (20 - 14 = 6 hidden).
+	out := v.PreviewView()
+	if !strings.Contains(out, "6 earlier turns") {
+		t.Errorf("no-query preview missing earlier-turns marker:\n%s", out)
+	}
+	if strings.Contains(out, "turn 0 body") {
+		t.Errorf("no-query preview should hide the oldest turn")
+	}
+	if !v.hasHiddenTurns {
+		t.Errorf("hasHiddenTurns should be true when turns are hidden")
+	}
+
+	// Query mode: matches-only. Only turn 3 (the match) renders; the marker is
+	// gone and non-matching turns are absent.
+	v.list.SetQuery("needle")
+	out = v.PreviewView()
+	if !strings.Contains(out, "needle") {
+		t.Errorf("query preview should show the matching turn:\n%s", out)
+	}
+	if strings.Contains(out, "earlier turns") {
+		t.Errorf("query preview should be matches-only (no window marker):\n%s", out)
+	}
+	if strings.Contains(out, "turn 5 body") {
+		t.Errorf("query preview should exclude non-matching turns")
+	}
+	if v.hasHiddenTurns {
+		t.Errorf("hasHiddenTurns should be false in matches-only mode")
+	}
+}
+
+func TestCachedTurnsMemoizes(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "s.jsonl", `{"type":"user","message":{"content":"hello"}}`+"\n")
+	s := session{Tool: toolClaude, Path: path}
+	v := New(nil)
+	first := v.cachedTurns(s)
+	// Delete the file; a memoized second call must NOT re-read (would return empty).
+	_ = os.Remove(path)
+	second := v.cachedTurns(s)
+	if len(second) != len(first) || len(second) == 0 {
+		t.Errorf("cachedTurns re-read after file removal: first=%d second=%d", len(first), len(second))
+	}
+	// A different path invalidates the cache.
+	other := session{Tool: toolClaude, Path: filepath.Join(dir, "gone.jsonl")}
+	if got := v.cachedTurns(other); got != nil {
+		t.Errorf("cachedTurns for a new path should re-parse (got %d turns)", len(got))
 	}
 }
 

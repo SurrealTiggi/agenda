@@ -6,11 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // cacheVersion is bumped whenever meta's schema changes, so stale on-disk
 // caches are discarded rather than read back missing new fields.
-const cacheVersion = "v3"
+const cacheVersion = "v6"
 
 // cacheEntry stores a parsed meta keyed by a cheap file signature so unchanged
 // files are never re-parsed. This mirrors the Python tool's meta-cache.
@@ -79,7 +80,7 @@ func collect() []session {
 			m = c.Meta
 		} else {
 			m = parse(f.path, f.tool)
-			m.Mentions = scanMentions(f.path, f.tool)
+			m.Mentions, m.Body = scanMentionsAndBody(f.path, f.tool)
 		}
 		next[f.path] = cacheEntry{Sig: sig, Meta: m}
 
@@ -97,5 +98,41 @@ func collect() []session {
 
 	saveCache(next)
 	sort.Slice(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
+	markSpawned(out)
 	return out
+}
+
+// markSpawned sets Spawned on any session whose log references the session ID of
+// an agent (programmatic) session — i.e. it spawned that sub-session. Most agent
+// sessions have no discoverable parent (hook/command-spawned with no
+// back-reference), so this marks only the few that are genuinely linkable.
+func markSpawned(sessions []session) {
+	// Collect agent session IDs (the potential children).
+	agentIDs := make([]string, 0)
+	for _, s := range sessions {
+		if s.isAgent() && s.SessionID != "" {
+			agentIDs = append(agentIDs, s.SessionID)
+		}
+	}
+	if len(agentIDs) == 0 {
+		return
+	}
+	for i := range sessions {
+		p := &sessions[i]
+		if p.isAgent() || p.Tool != toolClaude {
+			continue // only human Claude sessions spawn agent sub-sessions
+		}
+		data, err := os.ReadFile(p.Path)
+		if err != nil {
+			continue
+		}
+		blob := string(data)
+		n := 0
+		for _, id := range agentIDs {
+			if id != p.SessionID && strings.Contains(blob, id) {
+				n++
+			}
+		}
+		p.Spawned = n
+	}
 }

@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -54,5 +55,17 @@ func fmtCost(c float64) string {
 		return "<$0.01"
 	default:
 		return fmt.Sprintf("$%.2f", c)
+	}
+}
+
+// fmtTokens abbreviates a token count: 1234 -> "1.2K", 2_500_000 -> "2.5M".
+func fmtTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fK", float64(n)/1_000)
+	default:
+		return strconv.Itoa(n)
 	}
 }

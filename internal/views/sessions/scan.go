@@ -31,13 +31,21 @@ type mention struct {
 
 // meta is the parsed summary of one session file (the cacheable part).
 type meta struct {
-	Cwd       string    `json:"cwd"`
-	Title     string    `json:"title"`
-	Msgs      int       `json:"msgs"`
-	SessionID string    `json:"session_id"`
-	Mentions  []mention `json:"mentions"`
-	Model     string    `json:"model"` // Claude only; "" for other tools
-	Cost      float64   `json:"cost"`  // estimated USD; 0 when not derivable
+	Cwd        string    `json:"cwd"`
+	Title      string    `json:"title"`
+	Msgs       int       `json:"msgs"`
+	SessionID  string    `json:"session_id"`
+	Mentions   []mention `json:"mentions"`
+	Model      string    `json:"model"`      // Claude only; "" for other tools
+	Cost       float64   `json:"cost"`       // estimated USD; 0 when not derivable
+	Entrypoint string    `json:"entrypoint"` // Claude only; "cli" = interactive, else programmatic
+	Body       string    `json:"body"`       // flattened conversation text (capped), for full-text search
+
+	// Token usage, summed across assistant messages (Claude only; 0 otherwise).
+	InTok    int `json:"in_tok"`
+	OutTok   int `json:"out_tok"`
+	CacheTok int `json:"cache_tok"` // cache read + cache write
+
 	// LastTS is the timestamp of the last record in the transcript, i.e. when
 	// the conversation actually ended. Zero when the format carries no
 	// timestamps (Antigravity) or the file is empty.
@@ -52,6 +60,7 @@ type session struct {
 	// Updated is when the conversation last had activity — LastTS when the
 	// transcript records it, else the file's mtime.
 	Updated time.Time
+	Spawned int // number of agent sub-sessions this session is known to have spawned
 }
 
 // updatedAt prefers the conversation's own last timestamp over the file's
@@ -227,7 +236,7 @@ func scanLines(path string, fn func(line []byte)) error {
 }
 
 func parseClaude(path string) meta {
-	var cwd, first, last, aiTitle, customTitle, lastTS, model string
+	var cwd, first, last, aiTitle, customTitle, lastTS, model, entrypoint string
 	var inTok, outTok, cacheRead, cacheWrite int
 	n := 0
 	_ = scanLines(path, func(line []byte) {
@@ -237,6 +246,7 @@ func parseClaude(path string) meta {
 			AiTitle     string `json:"aiTitle"`
 			CustomTitle string `json:"customTitle"`
 			Timestamp   string `json:"timestamp"`
+			Entrypoint  string `json:"entrypoint"`
 			Message     struct {
 				Model   string          `json:"model"`
 				Content json.RawMessage `json:"content"`
@@ -257,6 +267,9 @@ func parseClaude(path string) meta {
 		// Transcripts are append-only, so the last stamped record wins.
 		if d.Timestamp != "" {
 			lastTS = d.Timestamp
+		}
+		if entrypoint == "" && d.Entrypoint != "" {
+			entrypoint = d.Entrypoint
 		}
 		switch d.Type {
 		case "custom-title":
@@ -300,13 +313,17 @@ func parseClaude(path string) meta {
 		title = first
 	}
 	return meta{
-		Cwd:       cwd,
-		Title:     truncTitle(title),
-		Msgs:      n,
-		SessionID: stem(path),
-		Model:     model,
-		Cost:      costUSD(inTok, outTok, cacheRead, cacheWrite, model),
-		LastTS:    parseTS(lastTS),
+		Cwd:        cwd,
+		Title:      truncTitle(title),
+		Msgs:       n,
+		SessionID:  stem(path),
+		Model:      model,
+		Cost:       costUSD(inTok, outTok, cacheRead, cacheWrite, model),
+		Entrypoint: entrypoint,
+		InTok:      inTok,
+		OutTok:     outTok,
+		CacheTok:   cacheRead + cacheWrite,
+		LastTS:     parseTS(lastTS),
 	}
 }
 
@@ -549,8 +566,20 @@ func canonPRURL(u string) string {
 // reverse lookup is keyed by a real issue/PR, and unmatched keys are queried by
 // nobody.
 func scanMentions(path string, t tool) []mention {
+	m, _ := scanMentionsAndBody(path, t)
+	return m
+}
+
+// maxBody caps the flattened conversation text stored for full-text search, so a
+// huge session doesn't bloat the cache or the filter's per-keystroke scan.
+const maxBody = 64 * 1024
+
+// scanMentionsAndBody walks a session's conversation once, returning both its
+// mentions and a flattened, size-capped body used for optional full-text search.
+func scanMentionsAndBody(path string, t tool) ([]mention, string) {
 	var out []mention
 	seen := map[string]bool{}
+	var body strings.Builder
 	for _, tn := range conversationTurns(path, t) {
 		snippet := cleanText(tn.text)
 		for _, m := range mentionLinearRe.FindAllString(tn.text, -1) {
@@ -567,8 +596,16 @@ func scanMentions(path string, t tool) []mention {
 				out = append(out, mention{Kind: "pr", ID: url, Snippet: snippet})
 			}
 		}
+		if body.Len() < maxBody {
+			body.WriteString(snippet)
+			body.WriteByte(' ')
+		}
 	}
-	return out
+	b := body.String()
+	if len(b) > maxBody {
+		b = b[:maxBody]
+	}
+	return out, b
 }
 
 func parse(path string, t tool) meta {

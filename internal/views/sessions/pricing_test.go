@@ -62,3 +62,20 @@ func TestFmtCost(t *testing.T) {
 		}
 	}
 }
+
+func TestFmtTokens(t *testing.T) {
+	cases := map[int]string{
+		0:         "0",
+		999:       "999",
+		1_000:     "1.0K",
+		1_234:     "1.2K",
+		12_500:    "12.5K",
+		1_000_000: "1.0M",
+		2_450_000: "2.5M",
+	}
+	for in, want := range cases {
+		if got := fmtTokens(in); got != want {
+			t.Errorf("fmtTokens(%d) = %q, want %q", in, got, want)
+		}
+	}
+}
