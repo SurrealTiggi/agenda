@@ -13,10 +13,14 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// Field is one named, scopable piece of an Item's searchable text.
+// Field is one named, scopable piece of an Item's searchable text. Prose marks
+// a large free-text field (e.g. a conversation body) that should be matched by
+// literal substring rather than fuzzy subsequence — subsequence matching on
+// long prose matches almost any query.
 type Field struct {
-	Name string
-	Text string
+	Name  string
+	Text  string
+	Prose bool
 }
 
 // Item is anything a List can hold. Render returns the row text for the given
@@ -180,8 +184,15 @@ func (l *List[T]) fieldEnabled(name string) bool {
 	return len(l.enabled) == 0 || l.enabled[name]
 }
 
-// highlighter is the active Highlighter derived from the filter state.
+// highlighter is the active Highlighter for in-row title highlighting. It is
+// suppressed unless the "title" field participates in matching — otherwise a
+// query aimed at another field (e.g. the conversation body) would fuzzy-match
+// and highlight stray characters in the title. When there's no explicit scope
+// (all fields on), the title is a match target and highlighting applies.
 func (l *List[T]) highlighter() Highlighter {
+	if !l.fieldEnabled("title") {
+		return Highlighter{}
+	}
 	return Highlighter{Query: strings.TrimSpace(l.query), CaseSensitive: l.caseSensitive}
 }
 
@@ -305,6 +316,13 @@ func (l *List[T]) Update(msg tea.Msg) (consumed bool, cmd tea.Cmd) {
 
 func (l *List[T]) move(delta int) { l.cursor += delta }
 
+// ScrollBy moves the cursor by n rows (n<0 = up), clamped to the list bounds.
+// Used for mouse-wheel scrolling; mirrors what the up/down keys do.
+func (l *List[T]) ScrollBy(n int) {
+	l.move(n)
+	l.clampCursor()
+}
+
 func (l *List[T]) clampCursor() {
 	if len(l.filtered) == 0 {
 		l.cursor, l.offset = 0, 0
@@ -336,8 +354,11 @@ func (l *List[T]) applyFilter() {
 	l.clampCursor()
 }
 
-// itemMatches reports whether q (already case-folded if needed) is a
-// subsequence of any enabled field's text.
+// itemMatches reports whether q (already case-folded if needed) matches any
+// enabled field. Short metadata fields use fuzzy subsequence matching (so "snt"
+// finds "sonnet"); prose fields (Prose() == true, e.g. a conversation body) use
+// literal substring matching — subsequence matching on a large body matches
+// almost any query and is never what the user means.
 func (l *List[T]) itemMatches(it T, q string) bool {
 	for _, f := range it.Fields() {
 		if !l.fieldEnabled(f.Name) {
@@ -346,6 +367,12 @@ func (l *List[T]) itemMatches(it T, q string) bool {
 		text := f.Text
 		if !l.caseSensitive {
 			text = strings.ToLower(text)
+		}
+		if f.Prose {
+			if strings.Contains(text, q) {
+				return true
+			}
+			continue
 		}
 		if matchesSubsequence(text, q) {
 			return true

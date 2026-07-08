@@ -25,6 +25,51 @@ func (f fieldItem) Fields() []Field {
 }
 func (f fieldItem) Filter() string { return f.repo + " " + f.title }
 
+// proseItem has a fuzzy title field and a substring-only prose body field.
+type proseItem struct{ title, body string }
+
+func (p proseItem) Render(width int, selected bool, hl Highlighter) string { return p.title }
+func (p proseItem) Fields() []Field {
+	return []Field{
+		{Name: "title", Text: p.title},
+		{Name: "text", Text: p.body, Prose: true},
+	}
+}
+func (p proseItem) Filter() string { return p.title }
+
+func TestProseFieldMatchesSubstringNotSubsequence(t *testing.T) {
+	l := NewList[proseItem]()
+	l.SetItems([]proseItem{
+		{title: "alpha", body: "the word MANDATORY appears here"},
+		{title: "beta", body: "many random abstract nouns deliver text"}, // has M..A..N..D..A..T as subsequence
+	})
+	// Scope to the prose field only, then search a term that is a subsequence of
+	// the second body but a literal substring of neither-except the first.
+	l.SetEnabledFields([]string{"text"})
+	l.SetQuery("mandat")
+	if l.Len() != 1 {
+		t.Fatalf("prose search matched %d items, want 1 (substring only, not subsequence)", l.Len())
+	}
+	if l.Selected().title != "alpha" {
+		t.Errorf("matched %q, want alpha (the one with literal MANDAT)", l.Selected().title)
+	}
+}
+
+func TestTitleHighlightSuppressedWhenTitleNotScoped(t *testing.T) {
+	l := NewList[proseItem]()
+	l.SetItems([]proseItem{{title: "mandate report", body: "x"}})
+	l.SetEnabledFields([]string{"text"}) // title NOT in scope
+	l.SetQuery("mandat")
+	// highlighter() must be inert so the title isn't fuzzy-highlighted.
+	if hl := l.highlighter(); hl.Query != "" {
+		t.Errorf("highlighter active for title while title unscoped: Query=%q", hl.Query)
+	}
+	l.SetEnabledFields([]string{"title", "text"}) // title back in scope
+	if hl := l.highlighter(); hl.Query == "" {
+		t.Errorf("highlighter should be active when title is scoped")
+	}
+}
+
 func newTestList(items ...string) List[strItem] {
 	l := NewList[strItem]()
 	conv := make([]strItem, len(items))
@@ -69,6 +114,25 @@ func TestListSelectionResetsWhenItemGone(t *testing.T) {
 	l.SetItems([]strItem{"x", "y"}) // "c" no longer present
 	if got := l.Selected(); got != "x" {
 		t.Errorf("Selected() = %q, want clamped to first %q", got, "x")
+	}
+}
+
+func TestListScrollBy(t *testing.T) {
+	l := newTestList("a", "b", "c", "d", "e")
+	if l.Selected() != "a" {
+		t.Fatalf("precondition: Selected()=%q, want a", l.Selected())
+	}
+	l.ScrollBy(3)
+	if l.Selected() != "d" {
+		t.Errorf("after ScrollBy(3) Selected()=%q, want d", l.Selected())
+	}
+	l.ScrollBy(100) // clamps to last
+	if l.Selected() != "e" {
+		t.Errorf("after ScrollBy(100) Selected()=%q, want e (clamped)", l.Selected())
+	}
+	l.ScrollBy(-100) // clamps to first
+	if l.Selected() != "a" {
+		t.Errorf("after ScrollBy(-100) Selected()=%q, want a (clamped)", l.Selected())
 	}
 }
 

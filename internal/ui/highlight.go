@@ -14,7 +14,10 @@ type Highlighter struct {
 	CaseSensitive bool
 }
 
-var highlightStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("13"))
+// highlightStyle mimics Vim's `Search` highlight: dark text on a yellow
+// background, so matches stand out as a solid block rather than just colored
+// glyphs. Colors 0 (black fg) / 3 (yellow bg) track the terminal theme.
+var highlightStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("3"))
 
 // matchIndices returns the rune indices of plain (indexing into []rune(plain))
 // that match Query as a subsequence, in order. nil if Query is empty or there
@@ -41,6 +44,38 @@ func (hl Highlighter) matchIndices(plain string) []int {
 		return nil // not a full subsequence match
 	}
 	return idx
+}
+
+// HighlightSubstr wraps every literal (contiguous) occurrence of Query in plain
+// with the highlight style — Vim-style search highlighting. Unlike Highlight
+// (fuzzy subsequence, for compact row fields), this is for long prose like the
+// preview pane, where scattering single-rune highlights would be noise. Returns
+// plain unchanged when Query is empty or absent.
+func (hl Highlighter) HighlightSubstr(plain string) string {
+	q := strings.TrimSpace(hl.Query)
+	if q == "" {
+		return plain
+	}
+	hay, needle := plain, q
+	if !hl.CaseSensitive {
+		hay, needle = strings.ToLower(plain), strings.ToLower(q)
+	}
+	if !strings.Contains(hay, needle) {
+		return plain
+	}
+	var b strings.Builder
+	for {
+		i := strings.Index(hay, needle)
+		if i < 0 {
+			b.WriteString(plain)
+			break
+		}
+		b.WriteString(plain[:i])
+		b.WriteString(highlightStyle.Render(plain[i : i+len(needle)]))
+		plain = plain[i+len(needle):]
+		hay = hay[i+len(needle):]
+	}
+	return b.String()
 }
 
 // Highlight returns plain with its matched runes wrapped in the highlight
