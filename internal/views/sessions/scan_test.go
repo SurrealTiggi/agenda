@@ -192,6 +192,55 @@ func TestParseCodex(t *testing.T) {
 	}
 }
 
+func TestParseClaudeLastTS(t *testing.T) {
+	dir := t.TempDir()
+	// Records are append-ordered, so the newest stamped record dates the
+	// session. Untimestamped records (ai-title) must not clear it.
+	content := `{"type":"user","timestamp":"2026-07-01T22:45:00.000Z","message":{"content":"first"}}
+{"type":"assistant","timestamp":"2026-07-02T09:46:12.500Z","message":{"content":"hi"}}
+{"type":"ai-title","aiTitle":"Generated Title"}
+`
+	m := parseClaude(writeFile(t, dir, "s.jsonl", content))
+	want := time.Date(2026, 7, 2, 9, 46, 12, 500_000_000, time.UTC)
+	if !m.LastTS.Equal(want) {
+		t.Errorf("LastTS = %v, want %v (last stamped record)", m.LastTS, want)
+	}
+}
+
+func TestParseCodexLastTS(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"timestamp":"2026-06-16T09:54:37.684Z","type":"session_meta","payload":{"cwd":"/x","id":"s1"}}
+{"timestamp":"2026-06-16T10:02:00.000Z","type":"event_msg","payload":{"type":"task_complete"}}
+`
+	m := parseCodex(writeFile(t, dir, "rollout-x.jsonl", content))
+	want := time.Date(2026, 6, 16, 10, 2, 0, 0, time.UTC)
+	if !m.LastTS.Equal(want) {
+		t.Errorf("LastTS = %v, want %v", m.LastTS, want)
+	}
+}
+
+func TestParseTSInvalid(t *testing.T) {
+	for _, in := range []string{"", "not a time", "2026-13-99"} {
+		if got := parseTS(in); !got.IsZero() {
+			t.Errorf("parseTS(%q) = %v, want zero time", in, got)
+		}
+	}
+}
+
+func TestUpdatedAt(t *testing.T) {
+	mtime := time.Date(2026, 8, 3, 7, 58, 17, 0, time.UTC)
+	// The real bug: a July session whose mtime was bumped to August by a
+	// restore/migration must still be dated July.
+	content := time.Date(2026, 7, 1, 23, 3, 0, 0, time.UTC)
+	if got := updatedAt(meta{LastTS: content}, mtime); !got.Equal(content) {
+		t.Errorf("updatedAt with LastTS = %v, want the conversation time %v", got, content)
+	}
+	// Formats without timestamps (Antigravity) still fall back to mtime.
+	if got := updatedAt(meta{}, mtime); !got.Equal(mtime) {
+		t.Errorf("updatedAt without LastTS = %v, want mtime %v", got, mtime)
+	}
+}
+
 func TestConversationTurnsClaude(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"type":"user","message":{"content":"q1"}}
@@ -252,17 +301,17 @@ func TestScanMentions(t *testing.T) {
 func TestSortSessions(t *testing.T) {
 	base := time.Now()
 	in := []session{
-		{meta: meta{Cwd: "/b", Msgs: 1}, Tool: toolCodex, MTime: base.Add(-2 * time.Hour)},
-		{meta: meta{Cwd: "/a", Msgs: 9}, Tool: toolClaude, MTime: base.Add(-1 * time.Hour)},
-		{meta: meta{Cwd: "/c", Msgs: 5}, Tool: toolClaude, MTime: base.Add(-3 * time.Hour)},
+		{meta: meta{Cwd: "/b", Msgs: 1}, Tool: toolCodex, Updated: base.Add(-2 * time.Hour)},
+		{meta: meta{Cwd: "/a", Msgs: 9}, Tool: toolClaude, Updated: base.Add(-1 * time.Hour)},
+		{meta: meta{Cwd: "/c", Msgs: 5}, Tool: toolClaude, Updated: base.Add(-3 * time.Hour)},
 	}
 
 	recent := sortSessions(in, sortRecent)
-	if !recent[0].MTime.After(recent[1].MTime) || !recent[1].MTime.After(recent[2].MTime) {
+	if !recent[0].Updated.After(recent[1].Updated) || !recent[1].Updated.After(recent[2].Updated) {
 		t.Error("sortRecent not newest-first")
 	}
 	oldest := sortSessions(in, sortOldest)
-	if !oldest[0].MTime.Before(oldest[2].MTime) {
+	if !oldest[0].Updated.Before(oldest[2].Updated) {
 		t.Error("sortOldest not oldest-first")
 	}
 	msgs := sortSessions(in, sortMsgs)

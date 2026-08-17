@@ -70,7 +70,7 @@ func (s session) Render(width int, selected bool, hl ui.Highlighter) string {
 	glyphs := ui.AgentIcon(string(s.Tool))
 
 	cwd := shortenPath(s.Cwd)
-	right := yellow.Render(strconv.Itoa(s.Msgs)) + "  " + grey.Render(ui.Age(s.MTime))
+	right := yellow.Render(strconv.Itoa(s.Msgs)) + "  " + grey.Render(ui.Age(s.Updated))
 
 	return ui.TwoLineRow(width, selected, glyphs, cwd, cyan.Render(cwd), right, s.titleOr(), hl)
 }
@@ -100,21 +100,21 @@ func sortSessions(in []session, mode sortMode) []session {
 		a, b := out[i], out[j]
 		switch mode {
 		case sortOldest:
-			return a.MTime.Before(b.MTime)
+			return a.Updated.Before(b.Updated)
 		case sortCwd:
 			if a.Cwd != b.Cwd {
 				return strings.ToLower(a.Cwd) < strings.ToLower(b.Cwd)
 			}
-			return a.MTime.After(b.MTime)
+			return a.Updated.After(b.Updated)
 		case sortTool:
 			if a.Tool != b.Tool {
 				return a.Tool < b.Tool
 			}
-			return a.MTime.After(b.MTime)
+			return a.Updated.After(b.Updated)
 		case sortMsgs:
 			return a.Msgs > b.Msgs
 		default: // recent
-			return a.MTime.After(b.MTime)
+			return a.Updated.After(b.Updated)
 		}
 	})
 	return out
@@ -185,7 +185,7 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 		v.publishMentions()
 		return nil
 	case resumedMsg:
-		// Resuming likely changed mtimes; rescan so order/age stay accurate.
+		// Resuming likely appended new turns; rescan so order/age stay accurate.
 		return v.fetch()
 	case tea.KeyMsg:
 		if consumed, cmd := v.list.Update(msg); consumed {
@@ -262,7 +262,7 @@ func (v *View) PreviewView() string {
 	b.WriteString(s.toolStyle().Bold(true).Render(strings.ToUpper(string(s.Tool))))
 	b.WriteString("  ")
 	b.WriteString(grey.Render(fmt.Sprintf("%s · %d msgs",
-		s.MTime.Format("2006-01-02 15:04"), s.Msgs)))
+		s.Updated.Format("2006-01-02 15:04"), s.Msgs)))
 	b.WriteString("\n")
 	b.WriteString(cyan.Render(shortenPath(s.Cwd)))
 	b.WriteString("\n")

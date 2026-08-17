@@ -10,7 +10,7 @@ import (
 
 // cacheVersion is bumped whenever meta's schema changes, so stale on-disk
 // caches are discarded rather than read back missing new fields.
-const cacheVersion = "v2"
+const cacheVersion = "v3"
 
 // cacheEntry stores a parsed meta keyed by a cheap file signature so unchanged
 // files are never re-parsed. This mirrors the Python tool's meta-cache.
@@ -88,14 +88,14 @@ func collect() []session {
 		}
 
 		out = append(out, session{
-			meta:  m,
-			Tool:  f.tool,
-			Path:  f.path,
-			MTime: st.ModTime(),
+			meta:    m,
+			Tool:    f.tool,
+			Path:    f.path,
+			Updated: updatedAt(m, st.ModTime()),
 		})
 	}
 
 	saveCache(next)
-	sort.Slice(out, func(i, j int) bool { return out[i].MTime.After(out[j].MTime) })
+	sort.Slice(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
 	return out
 }

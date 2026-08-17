@@ -36,14 +36,44 @@ type meta struct {
 	Msgs      int       `json:"msgs"`
 	SessionID string    `json:"session_id"`
 	Mentions  []mention `json:"mentions"`
+	// LastTS is the timestamp of the last record in the transcript, i.e. when
+	// the conversation actually ended. Zero when the format carries no
+	// timestamps (Antigravity) or the file is empty.
+	LastTS time.Time `json:"last_ts"`
 }
 
 // session is one row: parsed meta plus filesystem facts.
 type session struct {
 	meta
-	Tool  tool
-	Path  string
-	MTime time.Time
+	Tool tool
+	Path string
+	// Updated is when the conversation last had activity — LastTS when the
+	// transcript records it, else the file's mtime.
+	Updated time.Time
+}
+
+// updatedAt prefers the conversation's own last timestamp over the file's
+// mtime. Mtimes get rewritten by things that have nothing to do with the
+// conversation (backup restores, migrations, syncs), which would otherwise
+// date a July session to whenever it was last touched.
+func updatedAt(m meta, modTime time.Time) time.Time {
+	if !m.LastTS.IsZero() {
+		return m.LastTS
+	}
+	return modTime
+}
+
+// parseTS reads the RFC3339 timestamp Claude and Codex stamp on every record.
+// Unparseable or absent values yield the zero time, which falls back to mtime.
+func parseTS(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // --- discovery --------------------------------------------------------------
@@ -195,7 +225,7 @@ func scanLines(path string, fn func(line []byte)) error {
 }
 
 func parseClaude(path string) meta {
-	var cwd, first, last, aiTitle, customTitle string
+	var cwd, first, last, aiTitle, customTitle, lastTS string
 	n := 0
 	_ = scanLines(path, func(line []byte) {
 		var d struct {
@@ -203,6 +233,7 @@ func parseClaude(path string) meta {
 			Cwd         string `json:"cwd"`
 			AiTitle     string `json:"aiTitle"`
 			CustomTitle string `json:"customTitle"`
+			Timestamp   string `json:"timestamp"`
 			Message     struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
@@ -212,6 +243,10 @@ func parseClaude(path string) meta {
 		}
 		if cwd == "" && d.Cwd != "" {
 			cwd = d.Cwd
+		}
+		// Transcripts are append-only, so the last stamped record wins.
+		if d.Timestamp != "" {
+			lastTS = d.Timestamp
 		}
 		switch d.Type {
 		case "custom-title":
@@ -246,18 +281,19 @@ func parseClaude(path string) meta {
 	if title == "" {
 		title = first
 	}
-	return meta{Cwd: cwd, Title: truncTitle(title), Msgs: n, SessionID: stem(path)}
+	return meta{Cwd: cwd, Title: truncTitle(title), Msgs: n, SessionID: stem(path), LastTS: parseTS(lastTS)}
 }
 
 var uuidRe = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 
 func parseCodex(path string) meta {
-	var cwd, sid, first, last string
+	var cwd, sid, first, last, lastTS string
 	n := 0
 	_ = scanLines(path, func(line []byte) {
 		var d struct {
-			Type    string `json:"type"`
-			Payload struct {
+			Type      string `json:"type"`
+			Timestamp string `json:"timestamp"`
+			Payload   struct {
 				Cwd     string          `json:"cwd"`
 				ID      string          `json:"id"`
 				Type    string          `json:"type"`
@@ -267,6 +303,9 @@ func parseCodex(path string) meta {
 		}
 		if json.Unmarshal(line, &d) != nil {
 			return
+		}
+		if d.Timestamp != "" {
+			lastTS = d.Timestamp
 		}
 		switch {
 		case d.Type == "session_meta":
@@ -298,7 +337,7 @@ func parseCodex(path string) meta {
 	if title == "" {
 		title = last
 	}
-	return meta{Cwd: cwd, Title: truncTitle(title), Msgs: n, SessionID: sid}
+	return meta{Cwd: cwd, Title: truncTitle(title), Msgs: n, SessionID: sid, LastTS: parseTS(lastTS)}
 }
 
 var (
