@@ -111,6 +111,25 @@ then the case-sensitive row. `1`…`9` jump straight to a view by its tab positi
 - **Linear** — issues assigned to you (active states), via the Linear GraphQL
   API. Preview shows status, priority, labels, branch name, and the description.
 
+### Why old sessions disappear
+
+agenda applies no time window — it lists every transcript it finds. If your
+history looks unexpectedly short, the files are gone: **Claude Code deletes
+transcripts older than 30 days**, controlled by `cleanupPeriodDays`. To keep
+them longer, set a large value in `~/.claude/settings.json`:
+
+```json
+{ "cleanupPeriodDays": 3650 }
+```
+
+This only stops future deletion; already-swept transcripts aren't recoverable.
+Codex and Antigravity have their own retention behavior.
+
+Sessions are dated by the last timestamp *inside* the transcript, not the file's
+mtime, so a restore, sync, or migration that rewrites mtimes doesn't misdate a
+session. Antigravity transcripts carry no timestamps, so those fall back to
+mtime.
+
 ## Cross-references
 
 Views link to each other and `l` follows the link, in every direction:
