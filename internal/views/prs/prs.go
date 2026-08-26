@@ -14,6 +14,7 @@ import (
 	"image/color"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -221,6 +222,100 @@ func (p pr) Render(width int, selected bool, hl ui.Highlighter) string {
 	return ui.TwoLineRow(width, selected, glyphs, plain, styled, right, p.Title, hl)
 }
 
+// --- sorting ----------------------------------------------------------------
+
+type sortMode int
+
+const (
+	sortRecent sortMode = iota
+	sortReview
+	sortChecks
+	sortRepo
+	sortSize
+)
+
+var sortOrder = []sortMode{sortRecent, sortReview, sortChecks, sortRepo, sortSize}
+var sortName = map[sortMode]string{
+	sortRecent: "date", sortReview: "review", sortChecks: "checks",
+	sortRepo: "repo", sortSize: "size",
+}
+
+// reviewRank orders PRs by how much review attention they need: whatever is
+// blocked or unseen first, approved last.
+func reviewRank(p pr) int {
+	switch p.ReviewDecision {
+	case "CHANGES_REQUESTED":
+		return 0
+	case "REVIEW_REQUIRED":
+		return 1
+	case "APPROVED":
+		return 3
+	default: // no review decision yet
+		return 2
+	}
+}
+
+// checksRank orders PRs worst-CI-first, so anything red or unfinished floats
+// above the green ones.
+func checksRank(p pr) int {
+	switch p.ciState() {
+	case "FAILURE", "ERROR":
+		return 0
+	case "PENDING", "EXPECTED":
+		return 1
+	case "SUCCESS":
+		return 3
+	default: // no checks configured or reported
+		return 2
+	}
+}
+
+// size is the PR's total churn, used by the size sort.
+func (p pr) size() int { return p.Additions + p.Deletions }
+
+// sortPRs returns a sorted copy of in. When rev is set the comparison is
+// negated, which flips the whole ordering — primary key and tie-breaks alike —
+// so "date" becomes oldest-first, "size" biggest-first, and so on. Equal items
+// keep their original relative order either way.
+func sortPRs(in []pr, mode sortMode, rev bool) []pr {
+	out := make([]pr, len(in))
+	copy(out, in)
+	less := func(i, j int) bool {
+		a, b := out[i], out[j]
+		switch mode {
+		case sortReview:
+			if ra, rb := reviewRank(a), reviewRank(b); ra != rb {
+				return ra < rb
+			}
+			return a.UpdatedAt.After(b.UpdatedAt)
+		case sortChecks:
+			if ra, rb := checksRank(a), checksRank(b); ra != rb {
+				return ra < rb
+			}
+			return a.UpdatedAt.After(b.UpdatedAt)
+		case sortRepo:
+			if a.repo() != b.repo() {
+				return strings.ToLower(a.repo()) < strings.ToLower(b.repo())
+			}
+			return a.UpdatedAt.After(b.UpdatedAt)
+		case sortSize:
+			if a.size() != b.size() {
+				return a.size() < b.size() // smallest diff first: quickest to review
+			}
+			return a.UpdatedAt.After(b.UpdatedAt)
+		default: // recent
+			return a.UpdatedAt.After(b.UpdatedAt)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if rev {
+			return less(j, i)
+		}
+		return less(i, j)
+	})
+	return out
+}
+
 // --- messages ---------------------------------------------------------------
 
 type loadedMsg []pr
@@ -231,6 +326,9 @@ type errMsg struct{ err error }
 type View struct {
 	filter string
 	list   ui.List[pr]
+	raw    []pr
+	sort   sortMode
+	rev    bool // sort order reversed
 	store  *store.Store
 
 	loading bool
@@ -250,6 +348,8 @@ type viewKeys struct {
 	Open key.Binding
 	Copy key.Binding
 	Diff key.Binding
+	Sort key.Binding
+	Rev  key.Binding
 }
 
 func New(filter string, st *store.Store) *View {
@@ -262,13 +362,16 @@ func New(filter string, st *store.Store) *View {
 			Open: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 			Copy: key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy url")),
 			Diff: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "diff")),
+			Sort: key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
+			Rev:  key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "reverse")),
 		},
 	}
 	v.list.SetRowHeight(2) // two-line rows: metadata + title
 
 	// Paint last run's PRs immediately; the live fetch refreshes them.
 	if cached, ok := cache.Load[[]pr](cacheName); ok && len(cached) > 0 {
-		v.list.SetItems(cached)
+		v.raw = cached
+		v.applySort()
 		v.publish(cached)
 		v.loading = false
 	}
@@ -336,7 +439,8 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 	case loadedMsg:
 		v.loading = false
 		v.err = nil
-		v.list.SetItems([]pr(msg))
+		v.raw = []pr(msg)
+		v.applySort()
 		v.publish([]pr(msg))
 		_ = cache.Save(cacheName, []pr(msg))
 		return nil
@@ -358,6 +462,14 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 			return v.copySelected()
 		case key.Matches(msg, v.keys.Diff):
 			return v.diffSelected()
+		case key.Matches(msg, v.keys.Sort):
+			v.sort = sortOrder[(int(v.sort)+1)%len(sortOrder)]
+			v.applySort()
+			return nil
+		case key.Matches(msg, v.keys.Rev):
+			v.rev = !v.rev
+			v.applySort()
+			return nil
 		}
 	}
 	return nil
@@ -493,6 +605,10 @@ func (v *View) diffSelected() tea.Cmd {
 	return tea.ExecProcess(c, func(error) tea.Msg { return nil })
 }
 
+func (v *View) applySort() {
+	v.list.SetItems(sortPRs(v.raw, v.sort, v.rev))
+}
+
 func (v *View) SetSize(listW, prevW, h int) {
 	v.listW, v.prevW, v.height = listW, prevW, h
 	v.list.SetSize(listW, max(1, h-1)) // reserve a row for the header line
@@ -514,7 +630,7 @@ func (v *View) statusText() string {
 	case v.err != nil:
 		return "Error (ctrl+r to retry)"
 	default:
-		return fmt.Sprintf("%d PRs", v.list.Total())
+		return fmt.Sprintf("%d PRs · sort: %s%s", v.list.Total(), sortName[v.sort], ui.RevMarker(v.rev))
 	}
 }
 
@@ -586,7 +702,7 @@ func (v *View) renderedBody(p pr) string {
 }
 
 func (v *View) Bindings() []key.Binding {
-	return []key.Binding{v.keys.Open, v.keys.Diff, v.keys.Copy}
+	return []key.Binding{v.keys.Open, v.keys.Diff, v.keys.Copy, v.keys.Sort, v.keys.Rev}
 }
 
 func (v *View) Status() string {

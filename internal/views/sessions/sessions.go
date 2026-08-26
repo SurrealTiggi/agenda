@@ -81,26 +81,26 @@ type sortMode int
 
 const (
 	sortRecent sortMode = iota
-	sortOldest
 	sortCwd
 	sortTool
 	sortMsgs
 )
 
-var sortOrder = []sortMode{sortRecent, sortOldest, sortCwd, sortTool, sortMsgs}
+var sortOrder = []sortMode{sortRecent, sortCwd, sortTool, sortMsgs}
 var sortName = map[sortMode]string{
-	sortRecent: "recent", sortOldest: "oldest", sortCwd: "cwd",
-	sortTool: "tool", sortMsgs: "msgs",
+	sortRecent: "recent", sortCwd: "cwd", sortTool: "tool", sortMsgs: "msgs",
 }
 
-func sortSessions(in []session, mode sortMode) []session {
+// sortSessions returns a sorted copy of in. When rev is set the comparison is
+// negated, which flips the whole ordering — primary key and tie-breaks alike —
+// so "recent" becomes oldest-first and "msgs" shortest-first. Equal items keep
+// their original relative order either way.
+func sortSessions(in []session, mode sortMode, rev bool) []session {
 	out := make([]session, len(in))
 	copy(out, in)
-	sort.SliceStable(out, func(i, j int) bool {
+	less := func(i, j int) bool {
 		a, b := out[i], out[j]
 		switch mode {
-		case sortOldest:
-			return a.Updated.Before(b.Updated)
 		case sortCwd:
 			if a.Cwd != b.Cwd {
 				return strings.ToLower(a.Cwd) < strings.ToLower(b.Cwd)
@@ -116,6 +116,12 @@ func sortSessions(in []session, mode sortMode) []session {
 		default: // recent
 			return a.Updated.After(b.Updated)
 		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if rev {
+			return less(j, i)
+		}
+		return less(i, j)
 	})
 	return out
 }
@@ -131,6 +137,7 @@ type View struct {
 	list  ui.List[session]
 	raw   []session
 	sort  sortMode
+	rev   bool // sort order reversed
 	store *store.Store
 
 	loading bool
@@ -143,6 +150,7 @@ type View struct {
 type viewKeys struct {
 	Resume key.Binding
 	Sort   key.Binding
+	Rev    key.Binding
 }
 
 func New(st *store.Store) *View {
@@ -153,6 +161,7 @@ func New(st *store.Store) *View {
 		keys: viewKeys{
 			Resume: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "resume")),
 			Sort:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
+			Rev:    key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "reverse")),
 		},
 	}
 	v.list.SetRowHeight(2) // two-line rows: cwd + title
@@ -173,7 +182,7 @@ func (v *View) fetch() tea.Cmd {
 }
 
 func (v *View) applySort() {
-	v.list.SetItems(sortSessions(v.raw, v.sort))
+	v.list.SetItems(sortSessions(v.raw, v.sort, v.rev))
 }
 
 func (v *View) Update(msg tea.Msg) tea.Cmd {
@@ -199,6 +208,10 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 			return v.resume()
 		case key.Matches(msg, v.keys.Sort):
 			v.sort = sortOrder[(int(v.sort)+1)%len(sortOrder)]
+			v.applySort()
+			return nil
+		case key.Matches(msg, v.keys.Rev):
+			v.rev = !v.rev
 			v.applySort()
 			return nil
 		}
@@ -247,7 +260,7 @@ func (v *View) statusText() string {
 	if v.loading {
 		return "Scanning sessions…"
 	}
-	return fmt.Sprintf("%d sessions · sort: %s", v.list.Total(), sortName[v.sort])
+	return fmt.Sprintf("%d sessions · sort: %s%s", v.list.Total(), sortName[v.sort], ui.RevMarker(v.rev))
 }
 
 func (v *View) PreviewView() string {
@@ -298,7 +311,7 @@ func (v *View) PreviewView() string {
 }
 
 func (v *View) Bindings() []key.Binding {
-	return []key.Binding{v.keys.Resume, v.keys.Sort}
+	return []key.Binding{v.keys.Resume, v.keys.Sort, v.keys.Rev}
 }
 
 func (v *View) Status() string { return grey.Render(v.statusText()) }

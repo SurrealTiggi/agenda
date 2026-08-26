@@ -189,6 +189,84 @@ func (i issue) Render(width int, selected bool, hl ui.Highlighter) string {
 	return ui.TwoLineRow(width, selected, glyphs, plain, styled, right, i.Title, hl)
 }
 
+// --- sorting ----------------------------------------------------------------
+
+type sortMode int
+
+const (
+	sortRecent sortMode = iota
+	sortStatus
+)
+
+var sortOrder = []sortMode{sortRecent, sortStatus}
+var sortName = map[sortMode]string{sortRecent: "date", sortStatus: "status"}
+
+// statusRank orders Linear's workflow state types the way a working list wants
+// them: what's in flight first, then what's queued up. Unknown types sort last.
+func statusRank(stateType string) int {
+	switch stateType {
+	case "started":
+		return 0
+	case "unstarted":
+		return 1
+	case "triage":
+		return 2
+	case "backlog":
+		return 3
+	case "completed":
+		return 4
+	case "canceled":
+		return 5
+	default:
+		return 6
+	}
+}
+
+// priorityRank maps Linear's priority (0 none, 1 urgent … 4 low) to an
+// ascending "most important first" order, so unprioritised issues sort last.
+func priorityRank(p int) int {
+	if p == 0 {
+		return 5
+	}
+	return p
+}
+
+// sortIssues returns a sorted copy of in. When rev is set the comparison is
+// negated, which flips the whole ordering — primary key and tie-breaks alike —
+// so "date" becomes oldest-first and "status" runs backlog-first. Equal items
+// keep their original relative order either way.
+func sortIssues(in []issue, mode sortMode, rev bool) []issue {
+	out := make([]issue, len(in))
+	copy(out, in)
+	less := func(i, j int) bool {
+		a, b := out[i], out[j]
+		switch mode {
+		case sortStatus:
+			if ra, rb := statusRank(a.State.Type), statusRank(b.State.Type); ra != rb {
+				return ra < rb
+			}
+			// Same state type but different states (e.g. two "started" columns):
+			// keep them grouped by name so the list reads as columns.
+			if a.State.Name != b.State.Name {
+				return strings.ToLower(a.State.Name) < strings.ToLower(b.State.Name)
+			}
+			if ra, rb := priorityRank(a.Priority), priorityRank(b.Priority); ra != rb {
+				return ra < rb
+			}
+			return a.UpdatedAt.After(b.UpdatedAt)
+		default: // recent
+			return a.UpdatedAt.After(b.UpdatedAt)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if rev {
+			return less(j, i)
+		}
+		return less(i, j)
+	})
+	return out
+}
+
 // --- messages ---------------------------------------------------------------
 
 type loadedMsg []issue
@@ -199,6 +277,9 @@ type errMsg struct{ err error }
 type View struct {
 	token string
 	list  ui.List[issue]
+	raw   []issue
+	sort  sortMode
+	rev   bool // sort order reversed
 	store *store.Store
 
 	loading bool
@@ -216,6 +297,8 @@ type viewKeys struct {
 	Open   key.Binding
 	Copy   key.Binding
 	Branch key.Binding
+	Sort   key.Binding
+	Rev    key.Binding
 }
 
 func New(token string, st *store.Store) *View {
@@ -228,6 +311,8 @@ func New(token string, st *store.Store) *View {
 			Open:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 			Copy:   key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy url")),
 			Branch: key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "copy branch")),
+			Sort:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
+			Rev:    key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "reverse")),
 		},
 	}
 	v.list.SetRowHeight(2) // two-line rows: state/identifier + title
@@ -235,7 +320,8 @@ func New(token string, st *store.Store) *View {
 	// Paint last run's issues immediately; the live fetch refreshes them.
 	if token != "" {
 		if cached, ok := cache.Load[[]issue](cacheName); ok && len(cached) > 0 {
-			v.list.SetItems(cached)
+			v.raw = cached
+			v.applySort()
 			v.publish(cached)
 			v.loading = false
 		}
@@ -333,11 +419,7 @@ func (v *View) fetch() tea.Cmd {
 			return errMsg{fmt.Errorf("linear: %s", out.Errors[0].Message)}
 		}
 
-		issues := out.Data.Viewer.AssignedIssues.Nodes
-		sort.SliceStable(issues, func(a, b int) bool {
-			return issues[a].UpdatedAt.After(issues[b].UpdatedAt)
-		})
-		return loadedMsg(issues)
+		return loadedMsg(out.Data.Viewer.AssignedIssues.Nodes)
 	}
 }
 
@@ -346,7 +428,8 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 	case loadedMsg:
 		v.loading = false
 		v.err = nil
-		v.list.SetItems([]issue(msg))
+		v.raw = []issue(msg)
+		v.applySort()
 		v.publish([]issue(msg))
 		_ = cache.Save(cacheName, []issue(msg))
 		return nil
@@ -368,9 +451,21 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 			return copyCmd(v.list.Selected().URL)
 		case key.Matches(msg, v.keys.Branch):
 			return copyCmd(v.list.Selected().BranchName)
+		case key.Matches(msg, v.keys.Sort):
+			v.sort = sortOrder[(int(v.sort)+1)%len(sortOrder)]
+			v.applySort()
+			return nil
+		case key.Matches(msg, v.keys.Rev):
+			v.rev = !v.rev
+			v.applySort()
+			return nil
 		}
 	}
 	return nil
+}
+
+func (v *View) applySort() {
+	v.list.SetItems(sortIssues(v.raw, v.sort, v.rev))
 }
 
 func (v *View) SetSize(listW, prevW, h int) {
@@ -405,7 +500,7 @@ func (v *View) statusText() string {
 	case v.err != nil:
 		return "Error (ctrl+r to retry)"
 	default:
-		return fmt.Sprintf("%d issues", v.list.Total())
+		return fmt.Sprintf("%d issues · sort: %s%s", v.list.Total(), sortName[v.sort], ui.RevMarker(v.rev))
 	}
 }
 
@@ -478,7 +573,7 @@ func (v *View) Bindings() []key.Binding {
 	if v.token == "" {
 		return nil
 	}
-	return []key.Binding{v.keys.Open, v.keys.Copy, v.keys.Branch}
+	return []key.Binding{v.keys.Open, v.keys.Copy, v.keys.Branch, v.keys.Sort, v.keys.Rev}
 }
 
 func (v *View) Status() string { return grey.Render(v.statusText()) }
