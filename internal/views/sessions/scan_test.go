@@ -306,24 +306,44 @@ func TestSortSessions(t *testing.T) {
 		{meta: meta{Cwd: "/c", Msgs: 5}, Tool: toolClaude, Updated: base.Add(-3 * time.Hour)},
 	}
 
-	recent := sortSessions(in, sortRecent)
+	recent := sortSessions(in, sortRecent, false)
 	if !recent[0].Updated.After(recent[1].Updated) || !recent[1].Updated.After(recent[2].Updated) {
 		t.Error("sortRecent not newest-first")
 	}
-	oldest := sortSessions(in, sortOldest)
-	if !oldest[0].Updated.Before(oldest[2].Updated) {
-		t.Error("sortOldest not oldest-first")
-	}
-	msgs := sortSessions(in, sortMsgs)
+	msgs := sortSessions(in, sortMsgs, false)
 	if msgs[0].Msgs != 9 {
 		t.Errorf("sortMsgs[0].Msgs = %d, want 9 (highest first)", msgs[0].Msgs)
 	}
-	byCwd := sortSessions(in, sortCwd)
+	byCwd := sortSessions(in, sortCwd, false)
 	if byCwd[0].Cwd != "/a" || byCwd[2].Cwd != "/c" {
 		t.Errorf("sortCwd order = %q..%q, want /a../c", byCwd[0].Cwd, byCwd[2].Cwd)
 	}
 	// Original slice must be untouched (sortSessions copies).
 	if in[0].Cwd != "/b" {
 		t.Error("sortSessions mutated its input")
+	}
+}
+
+// Reversing a mode must invert it exactly — this is what replaced the old
+// dedicated "oldest" mode.
+func TestSortSessionsReversed(t *testing.T) {
+	base := time.Now()
+	in := []session{
+		{meta: meta{Cwd: "/b", Msgs: 1}, Tool: toolCodex, Updated: base.Add(-2 * time.Hour)},
+		{meta: meta{Cwd: "/a", Msgs: 9}, Tool: toolClaude, Updated: base.Add(-1 * time.Hour)},
+		{meta: meta{Cwd: "/c", Msgs: 5}, Tool: toolClaude, Updated: base.Add(-3 * time.Hour)},
+	}
+
+	oldest := sortSessions(in, sortRecent, true)
+	if !oldest[0].Updated.Before(oldest[2].Updated) {
+		t.Error("reversed sortRecent not oldest-first")
+	}
+	msgs := sortSessions(in, sortMsgs, true)
+	if msgs[0].Msgs != 1 {
+		t.Errorf("reversed sortMsgs[0].Msgs = %d, want 1 (lowest first)", msgs[0].Msgs)
+	}
+	byCwd := sortSessions(in, sortCwd, true)
+	if byCwd[0].Cwd != "/c" || byCwd[2].Cwd != "/a" {
+		t.Errorf("reversed sortCwd order = %q..%q, want /c../a", byCwd[0].Cwd, byCwd[2].Cwd)
 	}
 }

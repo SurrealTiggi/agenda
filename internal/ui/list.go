@@ -458,6 +458,16 @@ func (l *List[T]) FilterLine() string {
 	return faintStyle.Render(prefix+l.query) + cursor + faintStyle.Render(marker+count)
 }
 
+// RevMarker is the suffix a view appends to its "sort: <mode>" status text when
+// the sort order is reversed. Empty when it isn't, so callers can concatenate
+// unconditionally.
+func RevMarker(reversed bool) string {
+	if reversed {
+		return " (rev)"
+	}
+	return ""
+}
+
 // --- helpers ---------------------------------------------------------------
 
 func clamp(v, lo, hi int) int {

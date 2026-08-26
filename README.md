@@ -83,9 +83,9 @@ linear:
 | Global | `l` | follow references — opens a picker of related items |
 | Global | `ctrl+r` | refresh |
 | Global | `q` | quit |
-| PRs | `enter` · `d` · `y` | open · diff · copy URL |
-| Sessions | `enter` · `s` | resume · cycle sort |
-| Linear | `enter` · `y` · `b` | open · copy URL · copy branch |
+| PRs | `enter` · `d` · `y` · `s`/`S` | open · diff · copy URL · cycle sort / reverse it |
+| Sessions | `enter` · `s`/`S` | resume · cycle sort / reverse it |
+| Linear | `enter` · `y` · `b` · `s`/`S` | open · copy URL · copy branch · cycle sort / reverse it |
 | Reference picker | `enter` · `o` · `esc` | follow · open in browser · cancel |
 | Filter popup (`f`) | `↑`/`↓` (or `j`/`k`) · `space` · `enter` · `esc` | move · toggle field · apply · cancel |
 
@@ -102,14 +102,25 @@ then the case-sensitive row. `1`…`9` jump straight to a view by its tab positi
 
 - **PRs** — fetched via `gh api graphql`. Shows state/CI/review glyphs, `+/−`
   diff size, comments, and labels; preview renders the description with Glamour.
+  `s` cycles sort (date / review / checks / repo / size). `review` and `checks`
+  are worst-first — changes requested and failing checks float to the top,
+  approved and green sink to the bottom — and `size` puts the smallest diff
+  first. All modes tie-break on recency.
 - **Sessions** — scans `~/.claude`, `~/.codex`, and `~/.gemini/antigravity-cli`,
   caching parsed metadata by file signature. Each agent is shown as a Nerd Font
   icon (claude = robot, codex = code, antigravity = rocket) rather than its
   name. `enter` resumes the selected session in its original directory; `s`
-  cycles sort (recent / oldest / cwd / tool / msgs). Originally a Python tool,
-  ported to Go.
+  cycles sort (recent / cwd / tool / msgs). Originally a Python tool, ported to
+  Go.
 - **Linear** — issues assigned to you (active states), via the Linear GraphQL
   API. Preview shows status, priority, labels, branch name, and the description.
+  `s` cycles sort (date / status); status groups by workflow state — in progress,
+  then todo, triage, backlog — and breaks ties on priority, then recency.
+
+In every view `s` cycles the sort mode and `S` reverses whatever mode is active,
+flipping the primary key and its tie-breaks together: `S` over `date` gives
+oldest-first, over `size` biggest-first, over `checks` green-first. The active
+mode shows in the list header (`12 PRs · sort: checks (rev)`).
 
 ### Why old sessions disappear
 
