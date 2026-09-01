@@ -25,13 +25,14 @@ import (
 func fg(c string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(c)) }
 
 var (
-	magenta = fg("5")
-	green   = fg("2")
-	blue    = fg("4")
-	cyan    = fg("6")
-	yellow  = fg("3")
-	grey    = fg("8")
-	faint   = lipgloss.NewStyle().Faint(true)
+	magenta   = fg("5")
+	green     = fg("2")
+	blue      = fg("4")
+	cyan      = fg("6")
+	yellow    = fg("3")
+	grey      = fg("8")
+	faint     = lipgloss.NewStyle().Faint(true)
+	costStyle = green.Bold(true)
 )
 
 func (s session) toolStyle() lipgloss.Style {
@@ -52,8 +53,26 @@ func (s session) titleOr() string {
 	return s.Title
 }
 
+// isAgent reports whether this is a programmatic (SDK/command/hook-spawned)
+// session rather than one the user typed interactively. Only Claude logs carry
+// an entrypoint; "cli" is interactive, anything else (e.g. "sdk-py") is an agent
+// session. Codex/Antigravity have no entrypoint, so they're never agents.
+func (s session) isAgent() bool {
+	return s.Entrypoint != "" && s.Entrypoint != "cli"
+}
+
+// defaultFields is the field scope a fresh Sessions view filters on. It omits
+// "text" (the conversation body) so full-text search is off by default — the
+// user opts in by toggling the "text" field on in the filter modal (f).
+var defaultFields = []string{"tool", "cwd", "title", "model"}
+
+// Filter is the identity key used to preserve the selection across re-sorts and
+// re-filters (see ui.List). It is NOT used for match testing — that goes through
+// Fields() so each field matches by its own rule (see ui.List.itemMatches). The
+// body is deliberately excluded here: it's huge and would make a poor identity
+// key.
 func (s session) Filter() string {
-	return fmt.Sprintf("%s %s %s", s.Tool, shortenPath(s.Cwd), s.Title)
+	return fmt.Sprintf("%s %s %s %s", s.Tool, shortenPath(s.Cwd), s.Title, s.Model)
 }
 
 func (s session) Fields() []ui.Field {
@@ -61,18 +80,36 @@ func (s session) Fields() []ui.Field {
 		{Name: "tool", Text: string(s.Tool)},
 		{Name: "cwd", Text: shortenPath(s.Cwd)},
 		{Name: "title", Text: s.Title},
+		{Name: "model", Text: s.Model},
+		{Name: "text", Text: s.Body, Prose: true},
 	}
 }
 
 func (s session) Render(width int, selected bool, hl ui.Highlighter) string {
 	// Glyph column: the agent's Nerd Font icon (claude/codex/antigravity)
-	// instead of its spelled-out name.
+	// instead of its spelled-out name. Programmatic (agent) sessions get a muted
+	// gear prefix so they read as a distinct class from human ones.
 	glyphs := ui.AgentIcon(string(s.Tool))
+	if s.isAgent() {
+		glyphs = grey.Render("⚙") + glyphs
+	}
 
+	// metaPlain (width measurement) and metaStyled must carry the same text; the
+	// rare session that spawned agent sub-sessions gets a "spawned N" hint.
 	cwd := shortenPath(s.Cwd)
-	right := yellow.Render(strconv.Itoa(s.Msgs)) + "  " + grey.Render(ui.Age(s.Updated))
+	metaStyled := cyan.Render(cwd)
+	if s.Spawned > 0 {
+		hint := fmt.Sprintf("⤷ spawned %d", s.Spawned)
+		cwd += "  " + hint
+		metaStyled += "  " + grey.Render(hint)
+	}
 
-	return ui.TwoLineRow(width, selected, glyphs, cwd, cyan.Render(cwd), right, s.titleOr(), hl)
+	right := yellow.Render(strconv.Itoa(s.Msgs)) + "  " + grey.Render(ui.Age(s.Updated))
+	if c := fmtCost(s.Cost); c != "" {
+		right = costStyle.Render(c) + "  " + right
+	}
+
+	return ui.TwoLineRow(width, selected, glyphs, cwd, metaStyled, right, s.titleOr(), hl)
 }
 
 // --- sorting ----------------------------------------------------------------
@@ -84,11 +121,13 @@ const (
 	sortCwd
 	sortTool
 	sortMsgs
+	sortCost
 )
 
-var sortOrder = []sortMode{sortRecent, sortCwd, sortTool, sortMsgs}
+var sortOrder = []sortMode{sortRecent, sortCwd, sortTool, sortMsgs, sortCost}
 var sortName = map[sortMode]string{
-	sortRecent: "recent", sortCwd: "cwd", sortTool: "tool", sortMsgs: "msgs",
+	sortRecent: "recent", sortCwd: "cwd", sortTool: "tool",
+	sortMsgs: "msgs", sortCost: "cost",
 }
 
 // sortSessions returns a sorted copy of in. When rev is set the comparison is
@@ -113,6 +152,11 @@ func sortSessions(in []session, mode sortMode, rev bool) []session {
 			return a.Updated.After(b.Updated)
 		case sortMsgs:
 			return a.Msgs > b.Msgs
+		case sortCost:
+			if a.Cost != b.Cost {
+				return a.Cost > b.Cost // most expensive first
+			}
+			return a.Updated.After(b.Updated)
 		default: // recent
 			return a.Updated.After(b.Updated)
 		}
@@ -140,7 +184,25 @@ type View struct {
 	rev   bool // sort order reversed
 	store *store.Store
 
-	loading bool
+	showAgents bool // when false, programmatic (SDK/agent) sessions are hidden
+	confirmDel bool // armed delete: next y/enter deletes the selected session
+	loading    bool
+
+	// expandExtra is how many turns beyond the base window to show in the preview,
+	// added by shift+e. expandKey ties it to the selected session so it resets
+	// when the selection changes.
+	expandExtra int
+	expandKey   string
+	// hasHiddenTurns caches whether the last-rendered preview had turns above the
+	// fold, so Bindings() can offer expand without re-reading the file each frame.
+	hasHiddenTurns bool
+
+	// turnCache memoizes the parsed conversation turns of the selected session, so
+	// the preview isn't re-read and re-parsed on every render/scroll tick (a real
+	// cost on long sessions). Keyed by file path; invalidated when the selection
+	// changes to a different path.
+	turnCache    []turn
+	turnCacheKey string
 
 	listW, prevW, height int
 
@@ -151,6 +213,9 @@ type viewKeys struct {
 	Resume key.Binding
 	Sort   key.Binding
 	Rev    key.Binding
+	Agents key.Binding
+	Delete key.Binding
+	Expand key.Binding
 }
 
 func New(st *store.Store) *View {
@@ -162,9 +227,15 @@ func New(st *store.Store) *View {
 			Resume: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "resume")),
 			Sort:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 			Rev:    key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "reverse")),
+			Agents: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "agents")),
+			Delete: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
+			Expand: key.NewBinding(key.WithKeys("E"), key.WithHelp("⇧e", "expand")),
 		},
 	}
 	v.list.SetRowHeight(2) // two-line rows: cwd + title
+	// Default filter scope excludes the "text" body field; the user enables it in
+	// the filter modal (f) to search inside conversations.
+	v.list.SetEnabledFields(defaultFields)
 	return v
 }
 
@@ -181,8 +252,35 @@ func (v *View) fetch() tea.Cmd {
 	return func() tea.Msg { return loadedMsg(collect()) }
 }
 
-func (v *View) applySort() {
-	v.list.SetItems(sortSessions(v.raw, v.sort, v.rev))
+// applyView filters raw by the agent toggle, then sorts, then hands the result
+// to the list. Cost totals (see statusText) are computed over raw regardless, so
+// hiding agent sessions never hides their spend.
+func (v *View) applyView() {
+	shown := v.raw
+	if !v.showAgents {
+		shown = make([]session, 0, len(v.raw))
+		for _, s := range v.raw {
+			if !s.isAgent() {
+				shown = append(shown, s)
+			}
+		}
+	}
+	sorted := sortSessions(shown, v.sort, v.rev)
+	if v.showAgents {
+		// Group: human sessions first, then agent sessions, each block keeping the
+		// active sort order. A stable partition preserves that order within groups.
+		humans := make([]session, 0, len(sorted))
+		agents := make([]session, 0, len(sorted))
+		for _, s := range sorted {
+			if s.isAgent() {
+				agents = append(agents, s)
+			} else {
+				humans = append(humans, s)
+			}
+		}
+		sorted = append(humans, agents...)
+	}
+	v.list.SetItems(sorted)
 }
 
 func (v *View) Update(msg tea.Msg) tea.Cmd {
@@ -190,13 +288,25 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 	case loadedMsg:
 		v.loading = false
 		v.raw = []session(msg)
-		v.applySort()
+		v.turnCacheKey = "" // a rescan may have changed the selected session's file
+		v.applyView()
 		v.publishMentions()
 		return nil
 	case resumedMsg:
 		// Resuming likely appended new turns; rescan so order/age stay accurate.
 		return v.fetch()
 	case tea.KeyMsg:
+		// A pending delete confirmation captures the next key.
+		if v.confirmDel {
+			switch msg.String() {
+			case "y", "enter":
+				v.confirmDel = false
+				return v.deleteSelected()
+			default:
+				v.confirmDel = false // any other key cancels
+				return nil
+			}
+		}
 		if consumed, cmd := v.list.Update(msg); consumed {
 			return cmd
 		}
@@ -204,15 +314,31 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 			return nil
 		}
 		switch {
+		case key.Matches(msg, v.keys.Delete):
+			if v.list.Selected().Path != "" {
+				v.confirmDel = true
+			}
+			return nil
 		case key.Matches(msg, v.keys.Resume):
 			return v.resume()
 		case key.Matches(msg, v.keys.Sort):
 			v.sort = sortOrder[(int(v.sort)+1)%len(sortOrder)]
-			v.applySort()
+			v.applyView()
+			return nil
+		case key.Matches(msg, v.keys.Agents):
+			v.showAgents = !v.showAgents
+			v.applyView()
+			return nil
+		case key.Matches(msg, v.keys.Expand):
+			// Reveal 14 more turns in the preview for the selected session.
+			if s := v.list.Selected(); s.Path != "" {
+				v.expandKey = s.Path
+				v.expandExtra += maxTurns
+			}
 			return nil
 		case key.Matches(msg, v.keys.Rev):
 			v.rev = !v.rev
-			v.applySort()
+			v.applyView()
 			return nil
 		}
 	}
@@ -243,6 +369,21 @@ func (v *View) resume() tea.Cmd {
 	return tea.ExecProcess(c, func(error) tea.Msg { return resumedMsg{} })
 }
 
+// deleteSelected removes the selected session's log file from disk and rescans.
+// For Claude/Codex that's the single .jsonl; for Antigravity the conversation
+// .db (its brain/ transcript dir is left — harmless, and keyed by a different id).
+func (v *View) deleteSelected() tea.Cmd {
+	s := v.list.Selected()
+	if s.Path == "" {
+		return nil
+	}
+	_ = os.Remove(s.Path)
+	return v.fetch() // rescan so the row disappears and totals update
+}
+
+// ScrollList moves the list selection by n rows (mouse wheel).
+func (v *View) ScrollList(n int) { v.list.ScrollBy(n) }
+
 func (v *View) SetSize(listW, prevW, h int) {
 	v.listW, v.prevW, v.height = listW, prevW, h
 	v.list.SetSize(listW, max(1, h-1))
@@ -257,10 +398,68 @@ func (v *View) ListView() string {
 }
 
 func (v *View) statusText() string {
+	if v.confirmDel {
+		s := v.list.Selected()
+		return yellow.Render(fmt.Sprintf("Delete %q? (y/n)", ui.Truncate(s.titleOr(), 50)))
+	}
 	if v.loading {
 		return "Scanning sessions…"
 	}
-	return fmt.Sprintf("%d sessions · sort: %s%s", v.list.Total(), sortName[v.sort], ui.RevMarker(v.rev))
+	// Cost is split by class over ALL sessions (not just the visible ones) so the
+	// totals stay honest whether or not agent sessions are shown.
+	var youCost, agentCost float64
+	for _, s := range v.raw {
+		if s.isAgent() {
+			agentCost += s.Cost
+		} else {
+			youCost += s.Cost
+		}
+	}
+	base := fmt.Sprintf("%d sessions · sort: %s%s", v.list.Total(), sortName[v.sort], ui.RevMarker(v.rev))
+	if youCost > 0 {
+		base += " · you " + fmtCost(youCost)
+	}
+	if agentCost > 0 {
+		state := "hidden"
+		if v.showAgents {
+			state = "shown"
+		}
+		base += fmt.Sprintf(" · agents %s (%s, a)", fmtCost(agentCost), state)
+	}
+	return base
+}
+
+// maxTurns is the base number of most-recent turns the preview shows; shift+e
+// reveals maxTurns more each press. When a text query is active the preview
+// switches to a matches-only view instead of expanding the window.
+const maxTurns = 14
+
+// cachedTurns returns the parsed turns for session s, memoized by path so the
+// preview (rendered several times per frame, and on every scroll tick) parses
+// the file at most once per selection. A cheap fix for lag on long sessions.
+func (v *View) cachedTurns(s session) []turn {
+	if s.Path == v.turnCacheKey {
+		return v.turnCache
+	}
+	v.turnCache = conversationTurns(s.Path, s.Tool)
+	v.turnCacheKey = s.Path
+	return v.turnCache
+}
+
+// matchCount counts occurrences of the active query in the selected session's
+// (cached, in-memory) body, for the footer status. 0 when there's no query or no
+// match. Uses s.Body rather than re-reading the file so it's cheap to call every
+// frame.
+func (v *View) matchCount(s session) int {
+	q := strings.TrimSpace(v.list.Query())
+	if q == "" || s.Body == "" {
+		return 0
+	}
+	hay := s.Body
+	if !v.list.CaseSensitive() {
+		hay, q = strings.ToLower(hay), strings.ToLower(q)
+	}
+	return strings.Count(hay, q)
 }
 
 func (v *View) PreviewView() string {
@@ -274,9 +473,25 @@ func (v *View) PreviewView() string {
 	b.WriteString("  ")
 	b.WriteString(s.toolStyle().Bold(true).Render(strings.ToUpper(string(s.Tool))))
 	b.WriteString("  ")
-	b.WriteString(grey.Render(fmt.Sprintf("%s · %d msgs",
-		s.Updated.Format("2006-01-02 15:04"), s.Msgs)))
+	header := fmt.Sprintf("%s · %d msgs", s.Updated.Format("2006-01-02 15:04"), s.Msgs)
+	if s.Model != "" {
+		header += " · " + s.Model
+	}
+	b.WriteString(grey.Render(header))
 	b.WriteString("\n")
+	cost := fmtCost(s.Cost)
+	if cost == "" {
+		cost = "–"
+	}
+	b.WriteString(grey.Render("cost: "))
+	b.WriteString(costStyle.Render(cost))
+	b.WriteString("\n")
+	// Token usage breakdown, under cost (Claude only; zero for other tools).
+	if s.InTok+s.OutTok+s.CacheTok > 0 {
+		b.WriteString(grey.Render(fmt.Sprintf("tokens: in %s · out %s · cache %s",
+			fmtTokens(s.InTok), fmtTokens(s.OutTok), fmtTokens(s.CacheTok))))
+		b.WriteString("\n")
+	}
 	b.WriteString(cyan.Render(shortenPath(s.Cwd)))
 	b.WriteString("\n")
 	b.WriteString(faint.Render(s.SessionID))
@@ -284,39 +499,104 @@ func (v *View) PreviewView() string {
 	b.WriteString(grey.Render(strings.Repeat("─", min(v.prevW, 60))))
 	b.WriteString("\n")
 
-	turns := conversationTurns(s.Path, s.Tool)
+	turns := v.cachedTurns(s)
 	if len(turns) == 0 {
 		b.WriteString(faint.Render("(no conversation content)"))
 		return b.String()
 	}
 
-	// Show the most recent turns (chronological). The pane is clipped to its
-	// height by the root model; recent context is what matters before resuming.
-	const maxTurns = 14
-	if len(turns) > maxTurns {
-		turns = turns[len(turns)-maxTurns:]
-	}
+	hl := ui.Highlighter{Query: v.list.Query(), CaseSensitive: v.list.CaseSensitive()}
 	wrap := lipgloss.NewStyle().Width(max(20, v.prevW))
-	for _, t := range turns {
+	writeTurn := func(t turn) {
 		label, style := "● ai ", blue
 		if t.role == "user" {
 			label, style = "▶ you", green
 		}
 		b.WriteString(style.Render(label))
 		b.WriteByte(' ')
-		b.WriteString(wrap.Render(ui.Truncate(t.text, 600)))
+		b.WriteString(wrap.Render(hl.HighlightSubstr(ui.Truncate(t.text, 600))))
 		b.WriteString("\n\n")
+	}
+
+	// Matches-only mode: with an active query, render just the turns that contain
+	// it (cheap even for very long sessions) rather than the whole tail. Without a
+	// query, show the most-recent window, growable with shift+e.
+	if q := v.queryLower(); q != "" {
+		shown := 0
+		for _, t := range turns {
+			if strings.Contains(v.fold(t.text), q) {
+				writeTurn(t)
+				shown++
+			}
+		}
+		v.hasHiddenTurns = false // matches-only: nothing to expand into
+		if shown == 0 {
+			b.WriteString(faint.Render("(no matching turns in this session)"))
+		}
+		return b.String()
+	}
+
+	start := len(turns) - maxTurns - v.expandFor(s)
+	if start < 0 {
+		start = 0
+	}
+	v.hasHiddenTurns = start > 0
+	if start > 0 {
+		b.WriteString(faint.Render(fmt.Sprintf("… %d earlier turns (⇧e to expand) …", start)))
+		b.WriteString("\n\n")
+	}
+	for _, t := range turns[start:] {
+		writeTurn(t)
 	}
 	return b.String()
 }
 
-func (v *View) Bindings() []key.Binding {
-	return []key.Binding{v.keys.Resume, v.keys.Sort, v.keys.Rev}
+// expandFor returns the manual (shift+e) extra-turn count for session s.
+func (v *View) expandFor(s session) int {
+	if s.Path == v.expandKey {
+		return v.expandExtra
+	}
+	return 0
 }
 
-func (v *View) Status() string { return grey.Render(v.statusText()) }
+// queryLower returns the trimmed filter query, lowercased unless a case-sensitive
+// match is active. Empty when there's no query.
+func (v *View) queryLower() string {
+	q := strings.TrimSpace(v.list.Query())
+	if q != "" && !v.list.CaseSensitive() {
+		q = strings.ToLower(q)
+	}
+	return q
+}
 
-func (v *View) InputActive() bool { return v.list.Filtering() }
+// fold lowercases s unless case-sensitive matching is active, matching queryLower.
+func (v *View) fold(s string) string {
+	if v.list.CaseSensitive() {
+		return s
+	}
+	return strings.ToLower(s)
+}
+
+func (v *View) Bindings() []key.Binding {
+	b := []key.Binding{v.keys.Resume, v.keys.Sort, v.keys.Rev, v.keys.Agents, v.keys.Delete}
+	// Offer expand only when the last-rendered preview had turns above the fold
+	// (computed in PreviewView, which renders earlier in the same frame).
+	if v.hasHiddenTurns {
+		b = append(b, v.keys.Expand)
+	}
+	return b
+}
+
+func (v *View) Status() string {
+	// Surface the match count for the selected session so the user knows there's
+	// something to expand into.
+	if n := v.matchCount(v.list.Selected()); n > 0 {
+		return green.Render(fmt.Sprintf("%d matches", n)) + grey.Render(" · "+v.statusText())
+	}
+	return grey.Render(v.statusText())
+}
+
+func (v *View) InputActive() bool { return v.list.Filtering() || v.confirmDel }
 
 func (v *View) Fields() []string { return v.list.FieldNames() }
 

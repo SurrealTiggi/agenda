@@ -105,6 +105,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinnerFrame++
 		return m, spinnerTick()
 
+	case tea.MouseWheelMsg:
+		// Hover-targeted wheel scroll: wheel over the list column scrolls the
+		// list; wheel over the preview column scrolls the preview.
+		if !m.ready {
+			return m, nil
+		}
+		const step = 3
+		var dir int
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			dir = -step
+		case tea.MouseWheelDown:
+			dir = step
+		default:
+			return m, nil // ignore horizontal wheel
+		}
+		listW, _, _ := m.dims()
+		if msg.X >= listW {
+			m.scrollPreview(dir)
+		} else {
+			m.scrollList(dir)
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		// While the cross-reference picker is open it captures all keys.
 		if m.picker != nil {
@@ -268,6 +292,22 @@ type filterable interface {
 	SetFilter(query string, enabled []string, caseSensitive bool)
 }
 
+// scroller is implemented by views whose list can be scrolled by the mouse wheel.
+type scroller interface {
+	ScrollList(n int)
+}
+
+// scrollList forwards a wheel scroll to the focused view's list, if it supports it.
+func (m *Model) scrollList(n int) {
+	if len(m.views) == 0 {
+		return
+	}
+	if s, ok := m.views[m.current].(scroller); ok {
+		s.ScrollList(n)
+		m.syncPreviewKey(false) // scrolling may move the selection
+	}
+}
+
 // currentRefs is the cross-references the focused view exposes for its
 // selection, filtered to those we can act on — either a loaded view resolves
 // them, or they carry a browser-fallback URL. This drops regex false-positives
@@ -366,6 +406,7 @@ func (m *Model) layout() {
 func (m Model) View() tea.View {
 	var v tea.View
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion // enable mouse wheel events
 	if !m.ready || len(m.views) == 0 {
 		v.Content = "Loading agenda…"
 		return v

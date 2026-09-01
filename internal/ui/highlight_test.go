@@ -58,3 +58,30 @@ func TestHighlighterHighlight(t *testing.T) {
 		t.Errorf("Highlight added no styling for a match: %q", out)
 	}
 }
+
+func TestHighlighterHighlightSubstr(t *testing.T) {
+	// Empty query / no match: unchanged, no escape codes.
+	if got := (Highlighter{}).HighlightSubstr("hello world"); got != "hello world" {
+		t.Errorf("empty query = %q, want unchanged", got)
+	}
+	if got := (Highlighter{Query: "xyz"}).HighlightSubstr("hello world"); got != "hello world" {
+		t.Errorf("no match = %q, want unchanged", got)
+	}
+	// Substring (not subsequence): "lo wo" must match contiguously; "hlo" must NOT.
+	if got := (Highlighter{Query: "hlo"}).HighlightSubstr("hello"); got != "hello" {
+		t.Errorf("subsequence should not match in HighlightSubstr: %q", got)
+	}
+	// A real substring match adds styling and preserves the visible text.
+	out := (Highlighter{Query: "wor"}).HighlightSubstr("hello world")
+	if out == "hello world" {
+		t.Errorf("expected styling for substring match, got unchanged")
+	}
+	if !strings.Contains(out, "hello ") || !strings.Contains(out, "ld") {
+		t.Errorf("HighlightSubstr corrupted surrounding text: %q", out)
+	}
+	// Case-insensitive by default; every occurrence highlighted.
+	multi := (Highlighter{Query: "ab"}).HighlightSubstr("ABxabxAB")
+	if strings.Count(multi, "\x1b[") < 3 { // 3 occurrences → at least 3 style openers
+		t.Errorf("expected all occurrences highlighted: %q", multi)
+	}
+}
