@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/obliadp/agenda/internal/config"
+	"github.com/obliadp/agenda/internal/notify"
 	"github.com/obliadp/agenda/internal/store"
 	"github.com/obliadp/agenda/internal/tui"
 	"github.com/obliadp/agenda/internal/ui"
@@ -40,13 +41,16 @@ func main() {
 	// mentions) and read each other's to render cross-references.
 	st := store.New()
 
+	// nil when notifications are off; views treat that as disabled.
+	notifier := notify.New(cfg.Notify.Popup, cfg.Notify.SoundEnabled())
+
 	// Build the configured views in tab order (disabled views drop out).
 	enabled := cfg.EnabledViews()
 	var views []tui.View
 	for _, name := range enabled {
 		switch name {
 		case "prs":
-			views = append(views, prs.New(cfg.GitHub.Filter, st))
+			views = append(views, prs.New(cfg.GitHub, cfg.Keys, notifier, st))
 		case "sessions":
 			views = append(views, sessions.New(st))
 		case "linear":
