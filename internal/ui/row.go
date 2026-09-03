@@ -24,7 +24,7 @@ import (
 func TwoLineRow(width int, selected bool, glyphs, metaPlain, metaStyled, right, title string, hl Highlighter) string {
 	bar := "  "
 	if selected {
-		bar = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Render("▌") + " "
+		bar = Accent.Render("▌") + " "
 	}
 
 	prefix := bar + glyphs + "  "
@@ -33,7 +33,7 @@ func TwoLineRow(width int, selected bool, glyphs, metaPlain, metaStyled, right, 
 	avail := max(1, width-indent-lipgloss.Width(right)-1)
 	meta := metaStyled
 	if lipgloss.Width(metaPlain) > avail {
-		meta = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(Truncate(metaPlain, avail))
+		meta = Dim.Render(Truncate(metaPlain, avail))
 	}
 	gap := max(1, width-indent-lipgloss.Width(meta)-lipgloss.Width(right))
 	line1 := prefix + meta + strings.Repeat(" ", gap) + right
@@ -41,11 +41,21 @@ func TwoLineRow(width int, selected bool, glyphs, metaPlain, metaStyled, right, 
 	plainTitle := Truncate(title, max(1, width-indent))
 	t := hl.Highlight(plainTitle)
 	if selected {
-		t = lipgloss.NewStyle().Bold(true).Render(t)
+		t = Bold.Render(t)
 	} else {
-		t = lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Render(t)
+		t = Text.Render(t)
 	}
 	line2 := bar + strings.Repeat(" ", indent-lipgloss.Width(bar)) + t
 
 	return line1 + "\n" + line2
+}
+
+// SectionSeparator draws a labeled section divider as a two-line block
+// (blank line + rule), sized for the two-line row layout every view uses.
+func SectionSeparator(label string, width int) string {
+	text := " " + label + " "
+	lead := Dim.Render("──")
+	fill := max(0, width-2-lipgloss.Width(text)-1)
+	rule := lead + Yellow.Bold(true).Render(text) + Dim.Render(strings.Repeat("─", fill))
+	return "\n" + rule
 }

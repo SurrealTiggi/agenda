@@ -85,3 +85,16 @@ func TestHighlighterHighlightSubstr(t *testing.T) {
 		t.Errorf("expected all occurrences highlighted: %q", multi)
 	}
 }
+
+func TestFuzzyHighlightUsesBlockStyle(t *testing.T) {
+	// Upstream's search highlight is a dark-on-yellow block; the fuzzy
+	// per-rune highlight must match it, not a bare accent foreground.
+	hl := Highlighter{Query: "ab"}
+	out := hl.Highlight("ab")
+	if !strings.Contains(out, "\x1b[") {
+		t.Fatalf("no styling applied: %q", out)
+	}
+	if out != highlightStyle().Render("a")+highlightStyle().Render("b") {
+		t.Errorf("fuzzy highlight diverges from highlightStyle(): %q", out)
+	}
+}

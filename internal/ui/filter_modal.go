@@ -147,8 +147,8 @@ func (m *FilterModal) EnabledFields() []string {
 // View renders the three-section boxed modal. The caller composites it over
 // its content.
 func (m *FilterModal) View() string {
-	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
-	faint := lipgloss.NewStyle().Faint(true)
+	accent := Accent
+	faint := Faint
 
 	const innerW = 30
 	divider := faint.Render(strings.Repeat("─", innerW))
@@ -184,7 +184,7 @@ func (m *FilterModal) View() string {
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("13")).
+		BorderForeground(lipgloss.Color(Pal().Accent)).
 		Padding(1, 2).
 		Render(titled)
 }

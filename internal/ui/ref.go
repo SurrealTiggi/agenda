@@ -4,16 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	"charm.land/lipgloss/v2"
-
 	"github.com/obliadp/agenda/internal/store"
 )
 
 // These ref builders live here so every view renders cross-references the same
 // way: a PR shows status glyphs + title, an issue shows its title on a second
 // line, a session shows its agent icon + a context snippet (see SessionRef).
-
-func refFg(c string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(c)) }
 
 // PRIcons renders state/CI/review/conflict glyphs for a stored PR. It returns
 // "" when the PR's status is unknown (a zero record), so callers that only have
@@ -25,32 +21,32 @@ func PRIcons(p store.PR) string {
 	var parts []string
 	switch p.State {
 	case store.PRMerged:
-		parts = append(parts, refFg("5").Render(IconMerged))
+		parts = append(parts, Magenta.Render(IconMerged))
 	case store.PRClosed:
-		parts = append(parts, refFg("1").Render(IconClosed))
+		parts = append(parts, Red.Render(IconClosed))
 	case store.PRDraft:
-		parts = append(parts, refFg("8").Render(IconDraft))
+		parts = append(parts, Dim.Render(IconDraft))
 	default:
-		parts = append(parts, refFg("2").Render(IconOpen))
+		parts = append(parts, Green.Render(IconOpen))
 	}
 	switch p.CI {
 	case store.CIPassing:
-		parts = append(parts, refFg("2").Render(IconCIOK))
+		parts = append(parts, Green.Render(IconCIOK))
 	case store.CIFailing:
-		parts = append(parts, refFg("1").Render(IconCIFail))
+		parts = append(parts, Red.Render(IconCIFail))
 	case store.CIPending:
-		parts = append(parts, refFg("3").Render(IconCIPending))
+		parts = append(parts, Yellow.Render(IconCIPending))
 	}
 	switch p.Review {
 	case store.ReviewApproved:
-		parts = append(parts, refFg("2").Render(IconApproved))
+		parts = append(parts, Green.Render(IconApproved))
 	case store.ReviewChanges:
-		parts = append(parts, refFg("1").Render(IconChanges))
+		parts = append(parts, Red.Render(IconChanges))
 	case store.ReviewPending:
-		parts = append(parts, refFg("3").Render(IconReviewReq))
+		parts = append(parts, Yellow.Render(IconReviewReq))
 	}
 	if p.HasConflicts {
-		parts = append(parts, refFg("1").Render("⚠"))
+		parts = append(parts, Red.Render("⚠"))
 	}
 	return strings.Join(parts, " ")
 }
