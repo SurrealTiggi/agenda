@@ -16,8 +16,10 @@ type Highlighter struct {
 
 // highlightStyle mimics Vim's `Search` highlight: dark text on a yellow
 // background, so matches stand out as a solid block rather than just colored
-// glyphs. Colors 0 (black fg) / 3 (yellow bg) track the terminal theme.
-var highlightStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("3"))
+// glyphs. Computed per call so the yellow follows the active palette.
+func highlightStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color(Pal().Yellow))
+}
 
 // matchIndices returns the rune indices of plain (indexing into []rune(plain))
 // that match Query as a subsequence, in order. nil if Query is empty or there
@@ -71,7 +73,7 @@ func (hl Highlighter) HighlightSubstr(plain string) string {
 			break
 		}
 		b.WriteString(plain[:i])
-		b.WriteString(highlightStyle.Render(plain[i : i+len(needle)]))
+		b.WriteString(highlightStyle().Render(plain[i : i+len(needle)]))
 		plain = plain[i+len(needle):]
 		hay = hay[i+len(needle):]
 	}
@@ -91,10 +93,11 @@ func (hl Highlighter) Highlight(plain string) string {
 	for _, i := range idx {
 		hit[i] = true
 	}
+	highlight := highlightStyle()
 	var b strings.Builder
 	for i, r := range []rune(plain) {
 		if hit[i] {
-			b.WriteString(highlightStyle.Render(string(r)))
+			b.WriteString(highlight.Render(string(r)))
 		} else {
 			b.WriteRune(r)
 		}

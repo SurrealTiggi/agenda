@@ -33,6 +33,18 @@ type Item interface {
 	Filter() string
 }
 
+// NonSelectable is optionally implemented by items that render but can never
+// hold the cursor: section separators and group headers. They are also
+// dropped whenever a filter query is active, so filtered lists stay flat.
+type NonSelectable interface {
+	Selectable() bool
+}
+
+func selectable(it any) bool {
+	ns, ok := it.(NonSelectable)
+	return !ok || ns.Selectable()
+}
+
 // List is a vertically-scrolling, filterable, single-selection list. It is
 // generic over the concrete item type so views get type-safe Selected().
 type List[T Item] struct {
@@ -72,6 +84,26 @@ func defaultListKeys() listKeys {
 
 func NewList[T Item]() List[T] {
 	return List[T]{keys: defaultListKeys(), rowHeight: 1}
+}
+
+// Rebind resolves the list's navigation keys through a KeyResolver, letting
+// config override them (scope "list" by convention; the resolver closes over
+// the scope). Help text stays with the defaults; the footer never shows
+// list-navigation bindings.
+func (l *List[T]) Rebind(of KeyResolver) {
+	bind := func(action string, def ...string) key.Binding {
+		return Bind(of(action, def...), "", "")
+	}
+	l.keys = listKeys{
+		Up:       bind("up", "up", "k"),
+		Down:     bind("down", "down", "j"),
+		Top:      bind("top", "g", "home"),
+		Bottom:   bind("bottom", "G", "end"),
+		HalfUp:   bind("half_up", "ctrl+u"),
+		HalfDown: bind("half_down", "ctrl+d"),
+		Filter:   bind("quick_filter", "/"),
+		Clear:    bind("clear_filter", "esc"),
+	}
 }
 
 // SetRowHeight declares how many lines each item's Render produces, so the
@@ -150,18 +182,22 @@ func (l *List[T]) SetCaseSensitive(b bool) { l.caseSensitive = b; l.applyFilter(
 // CaseSensitive reports the current case-sensitivity setting.
 func (l *List[T]) CaseSensitive() bool { return l.caseSensitive }
 
-// FieldNames returns every field name the items expose, in declaration order
-// (read from the first item). Empty if the list is empty.
+// FieldNames returns every field name the items expose, in declaration order,
+// read from the first real item; group headers have no fields, so a grouped
+// list must not consult its leading header. Empty if there are no real items.
 func (l *List[T]) FieldNames() []string {
-	if len(l.items) == 0 {
-		return nil
+	for i := range l.items {
+		if !selectable(l.items[i]) {
+			continue
+		}
+		fields := l.items[i].Fields()
+		names := make([]string, len(fields))
+		for j, f := range fields {
+			names[j] = f.Name
+		}
+		return names
 	}
-	fields := l.items[0].Fields()
-	names := make([]string, len(fields))
-	for i, f := range fields {
-		names[i] = f.Name
-	}
-	return names
+	return nil
 }
 
 // EnabledFields returns the field names currently enabled, in declaration
@@ -202,6 +238,10 @@ func (l *List[T]) Len() int { return len(l.filtered) }
 // Total is the number of items before filtering.
 func (l *List[T]) Total() int { return len(l.items) }
 
+// Items exposes the full item slice (before filtering), so callers can
+// inspect list composition; tests of grouping rely on it.
+func (l *List[T]) Items() []T { return l.items }
+
 // Any reports whether any visible item matches pred, without moving the cursor.
 func (l *List[T]) Any(pred func(T) bool) bool {
 	for _, idx := range l.filtered {
@@ -225,13 +265,18 @@ func (l *List[T]) Select(pred func(T) bool) bool {
 	return false
 }
 
-// Selected returns the currently-highlighted item, or the zero value if empty.
+// Selected returns the currently-highlighted item, or the zero value if empty
+// (or if the cursor could only land on a non-selectable row).
 func (l *List[T]) Selected() T {
 	var zero T
 	if l.cursor < 0 || l.cursor >= len(l.filtered) {
 		return zero
 	}
-	return l.items[l.filtered[l.cursor]]
+	it := l.items[l.filtered[l.cursor]]
+	if !selectable(it) {
+		return zero
+	}
+	return it
 }
 
 // Update handles navigation and filter-editing keys. It reports whether the
@@ -314,7 +359,37 @@ func (l *List[T]) Update(msg tea.Msg) (consumed bool, cmd tea.Cmd) {
 	return true, nil
 }
 
-func (l *List[T]) move(delta int) { l.cursor += delta }
+func (l *List[T]) move(delta int) {
+	if delta == 0 {
+		return
+	}
+	dir := 1
+	if delta < 0 {
+		dir = -1
+	}
+	l.cursor = clamp(l.cursor+delta, 0, max(0, len(l.filtered)-1))
+	l.snap(dir)
+}
+
+// snap slides the cursor off non-selectable rows: first onward in dir, then
+// back the other way if the list ends in separators.
+func (l *List[T]) snap(dir int) {
+	if len(l.filtered) == 0 {
+		return
+	}
+	for i := l.cursor; i >= 0 && i < len(l.filtered); i += dir {
+		if selectable(l.items[l.filtered[i]]) {
+			l.cursor = i
+			return
+		}
+	}
+	for i := l.cursor; i >= 0 && i < len(l.filtered); i -= dir {
+		if selectable(l.items[l.filtered[i]]) {
+			l.cursor = i
+			return
+		}
+	}
+}
 
 // ScrollBy moves the cursor by n rows (n<0 = up), clamped to the list bounds.
 // Used for mouse-wheel scrolling; mirrors what the up/down keys do.
@@ -329,6 +404,9 @@ func (l *List[T]) clampCursor() {
 		return
 	}
 	l.cursor = clamp(l.cursor, 0, len(l.filtered)-1)
+	if !selectable(l.items[l.filtered[l.cursor]]) {
+		l.snap(1)
+	}
 	// Keep the cursor within the visible window (measured in items).
 	win := l.visibleItems()
 	if l.cursor < l.offset {
@@ -336,6 +414,15 @@ func (l *List[T]) clampCursor() {
 	}
 	if l.cursor >= l.offset+win {
 		l.offset = l.cursor - win + 1
+	}
+	// Pull group headers directly above the window into view while there's
+	// slack: the cursor can never rest on a header, so a jump to the item
+	// right under one would otherwise clip the header off-screen and make
+	// the lane look like it vanished.
+	for l.offset > 0 &&
+		!selectable(l.items[l.filtered[l.offset-1]]) &&
+		l.cursor-l.offset+1 < win {
+		l.offset--
 	}
 	l.offset = clamp(l.offset, 0, max(0, len(l.filtered)-1))
 }
@@ -347,7 +434,12 @@ func (l *List[T]) applyFilter() {
 		q = strings.ToLower(q)
 	}
 	for i := range l.items {
-		if q == "" || l.itemMatches(l.items[i], q) {
+		if q == "" {
+			l.filtered = append(l.filtered, i)
+			continue
+		}
+		// Separators drop out of a filtered list; matches render flat.
+		if selectable(l.items[i]) && l.itemMatches(l.items[i], q) {
 			l.filtered = append(l.filtered, i)
 		}
 	}
@@ -428,8 +520,8 @@ func (l *List[T]) View() string {
 // light-line track. When everything fits (no overflow) it returns blanks, so a
 // reserved gutter stays empty. Shared by the list rows and the preview pane.
 func Scrollbar(height, total, visible, offset int) []string {
-	track := lipgloss.NewStyle().Faint(true).Render("│")
-	thumb := lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Render("┃")
+	track := Faint.Render("│")
+	thumb := Text.Render("┃")
 
 	out := make([]string, height)
 	if total <= visible { // everything visible: no bar

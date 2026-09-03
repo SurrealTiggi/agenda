@@ -81,8 +81,8 @@ func (p *Picker) Index() int { return p.cursor }
 
 // View renders the modal box. The caller composites it over its own content.
 func (p *Picker) View() string {
-	dim := lipgloss.NewStyle().Faint(true)
-	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	dim := Faint
+	accent := Accent
 	bold := lipgloss.NewStyle().Bold(true)
 
 	var b strings.Builder
@@ -118,7 +118,7 @@ func (p *Picker) View() string {
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("13")).
+		BorderForeground(lipgloss.Color(Pal().Accent)).
 		Padding(1, 2).
 		Render(b.String())
 }
