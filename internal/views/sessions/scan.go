@@ -52,11 +52,13 @@ type meta struct {
 	LastTS time.Time `json:"last_ts"`
 }
 
-// session is one row: parsed meta plus filesystem facts.
+// session is one row: parsed meta plus filesystem facts. A row with a
+// non-empty Separator is a swimlane header, not a session.
 type session struct {
 	meta
-	Tool tool
-	Path string
+	Separator string
+	Tool      tool
+	Path      string
 	// Updated is when the conversation last had activity — LastTS when the
 	// transcript records it, else the file's mtime.
 	Updated time.Time
