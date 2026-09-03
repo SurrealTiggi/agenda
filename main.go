@@ -7,12 +7,14 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/obliadp/agenda/internal/config"
 	"github.com/obliadp/agenda/internal/store"
 	"github.com/obliadp/agenda/internal/tui"
+	"github.com/obliadp/agenda/internal/ui"
 	"github.com/obliadp/agenda/internal/views/linear"
 	"github.com/obliadp/agenda/internal/views/prs"
 	"github.com/obliadp/agenda/internal/views/sessions"
@@ -25,26 +27,52 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The theme applies process-wide, so resolve it before any view exists.
+	palette, err := ui.ResolvePalette(cfg.Theme.Name, cfg.Theme.Palette)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "agenda: config error:", err)
+		os.Exit(1)
+	}
+	ui.SetPalette(palette)
+	ui.SetGlyphs(cfg.GlyphsEnabled())
+
 	// Shared metadata store: views publish facts they own (PR status, session
 	// mentions) and read each other's to render cross-references.
 	st := store.New()
 
-	// Build the configured views in tab order.
+	// Build the configured views in tab order (disabled views drop out).
+	enabled := cfg.EnabledViews()
 	var views []tui.View
-	for _, name := range cfg.Views {
+	for _, name := range enabled {
 		switch name {
 		case "prs":
 			views = append(views, prs.New(cfg.GitHub.Filter, st))
 		case "sessions":
-			if cfg.SessionsEnabled() {
-				views = append(views, sessions.New(st))
-			}
+			views = append(views, sessions.New(st))
 		case "linear":
 			views = append(views, linear.New(cfg.Linear.Token, st))
 		}
 	}
 
-	p := tea.NewProgram(tui.New(cfg, views))
+	// `agenda linear` (or prs/sessions) opens on that view.
+	initial := 0
+	if len(os.Args) > 1 {
+		want := strings.ToLower(os.Args[1])
+		found := false
+		for i, name := range enabled {
+			if name == want {
+				initial, found = i, true
+				break
+			}
+		}
+		if !found {
+			fmt.Fprintf(os.Stderr, "agenda: unknown or disabled view %q (enabled: %s)\n",
+				os.Args[1], strings.Join(enabled, ", "))
+			os.Exit(1)
+		}
+	}
+
+	p := tea.NewProgram(tui.New(cfg, views).WithInitialView(initial))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "agenda:", err)
 		os.Exit(1)
