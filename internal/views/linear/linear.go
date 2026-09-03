@@ -19,39 +19,25 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/obliadp/agenda/internal/cache"
 	"github.com/obliadp/agenda/internal/config"
+	"github.com/obliadp/agenda/internal/notify"
 	"github.com/obliadp/agenda/internal/store"
 	"github.com/obliadp/agenda/internal/ui"
 )
 
 const endpoint = "https://api.linear.app/graphql"
 
-// --- styles -----------------------------------------------------------------
-
-func fg(c string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(c)) }
-
-var (
-	red    = fg("1")
-	yellow = fg("3")
-	blue   = fg("4")
-	grey   = fg("8")
-	cyan   = fg("6")
-	bold   = lipgloss.NewStyle().Bold(true)
-	faint  = lipgloss.NewStyle().Faint(true)
-)
-
 // hexColor returns a lipgloss style whose foreground is the given Linear hex
-// color (which may or may not include a leading '#'), falling back to grey.
+// color (which may or may not include a leading '#'), falling back to ui.Dim.
 func hexStyle(hex string) lipgloss.Style {
 	hex = strings.TrimPrefix(hex, "#")
 	if len(hex) != 6 {
-		return grey
+		return ui.Dim
 	}
-	return fg("#" + hex)
+	return ui.Fg("#" + hex)
 }
 
 // --- data -------------------------------------------------------------------
@@ -61,7 +47,21 @@ type label struct {
 	Color string `json:"color"`
 }
 
+// issue is one row. A row with a non-empty Separator is a group header, not
+// an issue.
 type issue struct {
+	Separator string `json:"-"`
+	// HideStatus / HideProject suppress the row's status or project text when
+	// the list is grouped by that dimension, where the lane header already
+	// says it.
+	HideStatus  bool `json:"-"`
+	HideProject bool `json:"-"`
+	// Inbox rows represent a notification about the issue rather than the
+	// issue itself: who did what (InboxEvent/InboxActor) and whether it is
+	// still unread. UpdatedAt then carries the notification time.
+	InboxEvent    string    `json:"-"`
+	InboxActor    string    `json:"-"`
+	InboxUnread   bool      `json:"-"`
 	Identifier    string    `json:"identifier"`
 	Title         string    `json:"title"`
 	URL           string    `json:"url"`
@@ -142,11 +142,20 @@ func (a attachment) toPR() store.PR {
 	return p
 }
 
+// Selectable implements ui.NonSelectable: group headers never hold the cursor.
+func (i issue) Selectable() bool { return i.Separator == "" }
+
 func (i issue) Filter() string {
+	if i.Separator != "" {
+		return "\x00sep:" + i.Separator
+	}
 	return fmt.Sprintf("%s %s %s %s", i.Identifier, i.State.Name, i.Project.Name, i.Title)
 }
 
 func (i issue) Fields() []ui.Field {
+	if i.Separator != "" {
+		return nil
+	}
 	return []ui.Field{
 		{Name: "id", Text: i.Identifier},
 		{Name: "status", Text: i.State.Name},
@@ -161,31 +170,67 @@ func (i issue) Fields() []ui.Field {
 func (i issue) priorityCell() string {
 	switch i.Priority {
 	case 1:
-		return red.Bold(true).Render("!")
+		return ui.Red.Bold(true).Render("!")
 	case 2:
-		return yellow.Render("↑")
+		return ui.Yellow.Render("↑")
 	case 3:
-		return blue.Render("•")
+		return ui.Blue.Render("•")
 	case 4:
-		return grey.Render("↓")
+		return ui.Dim.Render("↓")
 	default:
-		return grey.Render("·")
+		return ui.Dim.Render("·")
 	}
 }
 
 func (i issue) Render(width int, selected bool, hl ui.Highlighter) string {
+	if i.Separator != "" {
+		return ui.GroupHeader(i.Separator, width)
+	}
+	if i.InboxEvent != "" {
+		return i.renderInboxRow(width, selected, hl)
+	}
 	glyphs := i.priorityCell()
 
-	// Metadata: state · identifier (· project).
-	plain := i.State.Name + "  " + i.Identifier
-	styled := hexStyle(i.State.Color).Render(i.State.Name) + "  " + cyan.Render(i.Identifier)
-	if i.Project.Name != "" {
+	// Metadata: state · identifier (· project), minus whatever the active
+	// grouping's lane header already announces.
+	plain, styled := "", ""
+	if !i.HideStatus {
+		plain = i.State.Name + "  "
+		styled = hexStyle(i.State.Color).Render(i.State.Name) + "  "
+	}
+	plain += i.Identifier
+	styled += ui.Cyan.Render(i.Identifier)
+	if i.Project.Name != "" && !i.HideProject {
 		plain += " · " + i.Project.Name
-		styled += grey.Render(" · " + i.Project.Name)
+		styled += ui.Dim.Render(" · " + i.Project.Name)
 	}
 
-	right := grey.Render(ui.Age(i.UpdatedAt))
+	right := ui.Dim.Render(ui.Age(i.UpdatedAt))
 
+	return ui.TwoLineRow(width, selected, glyphs, plain, styled, right, i.Title, hl)
+}
+
+// renderInboxRow draws an inbox row: unread marker, who did what, which
+// issue, and the event's age.
+func (i issue) renderInboxRow(width int, selected bool, hl ui.Highlighter) string {
+	glyphs := ui.Dim.Render("○")
+	if i.InboxUnread {
+		glyphs = ui.Accent.Render("●")
+	}
+
+	plain := i.InboxEvent
+	styled := ui.Yellow.Render(i.InboxEvent)
+	if !i.InboxUnread {
+		styled = ui.Dim.Render(i.InboxEvent)
+	}
+	if i.InboxActor != "" {
+		plain += " · " + i.InboxActor
+		styled += ui.Dim.Render(" · " + i.InboxActor)
+	}
+	plain += " · " + i.Identifier
+	styled += "  " + ui.Cyan.Render(i.Identifier)
+
+	right := ui.Dim.Render(ui.Age(i.UpdatedAt))
 	return ui.TwoLineRow(width, selected, glyphs, plain, styled, right, i.Title, hl)
 }
 
@@ -196,10 +241,15 @@ type sortMode int
 const (
 	sortRecent sortMode = iota
 	sortStatus
+	sortProject
+	sortPriority
 )
 
-var sortOrder = []sortMode{sortRecent, sortStatus}
-var sortName = map[sortMode]string{sortRecent: "date", sortStatus: "status"}
+var sortOrder = []sortMode{sortRecent, sortStatus, sortProject, sortPriority}
+var sortName = map[sortMode]string{
+	sortRecent: "date", sortStatus: "status",
+	sortProject: "project", sortPriority: "priority",
+}
 
 // statusRank orders Linear's workflow state types the way a working list wants
 // them: what's in flight first, then what's queued up. Unknown types sort last.
@@ -254,6 +304,20 @@ func sortIssues(in []issue, mode sortMode, rev bool) []issue {
 				return ra < rb
 			}
 			return a.UpdatedAt.After(b.UpdatedAt)
+		case sortProject:
+			// Alphabetical by project, issues without one last.
+			if a.Project.Name != b.Project.Name {
+				if a.Project.Name == "" || b.Project.Name == "" {
+					return b.Project.Name == ""
+				}
+				return strings.ToLower(a.Project.Name) < strings.ToLower(b.Project.Name)
+			}
+			return a.UpdatedAt.After(b.UpdatedAt)
+		case sortPriority:
+			if ra, rb := priorityRank(a.Priority), priorityRank(b.Priority); ra != rb {
+				return ra < rb
+			}
+			return a.UpdatedAt.After(b.UpdatedAt)
 		default: // recent
 			return a.UpdatedAt.After(b.UpdatedAt)
 		}
@@ -267,20 +331,94 @@ func sortIssues(in []issue, mode sortMode, rev bool) []issue {
 	return out
 }
 
+// --- grouping ----------------------------------------------------------------
+
+// priorityBucket names a priority swimlane, keyed by priorityRank.
+var priorityBucket = map[int]string{
+	1: "Urgent", 2: "High", 3: "Medium", 4: "Low", 5: "No priority",
+}
+
+// groupLabelFn returns the swimlane label for a sort mode, or nil for sorts
+// with no feasible grouping. Every label follows the sort's primary key, so
+// equal labels are contiguous in the sorted slice.
+func groupLabelFn(mode sortMode) func(issue) string {
+	switch mode {
+	case sortRecent:
+		return func(i issue) string { return ui.TimeBucket(i.UpdatedAt) }
+	case sortStatus:
+		return func(i issue) string { return i.State.Name }
+	case sortProject:
+		return func(i issue) string {
+			if i.Project.Name == "" {
+				return "no project"
+			}
+			return i.Project.Name
+		}
+	case sortPriority:
+		return func(i issue) string { return priorityBucket[priorityRank(i.Priority)] }
+	default:
+		return nil
+	}
+}
+
 // --- messages ---------------------------------------------------------------
 
-type loadedMsg []issue
+// loadedMsg tags the fetched issues with their source, so a source switch
+// never masquerades as "new issues" for notifications.
+type loadedMsg struct {
+	issues []issue
+	source navSource
+}
+
 type errMsg struct{ err error }
 
 // --- view -------------------------------------------------------------------
 
 type View struct {
-	token string
-	list  ui.List[issue]
-	raw   []issue
-	sort  sortMode
-	rev   bool // sort order reversed
-	store *store.Store
+	cfg      config.LinearConfig
+	token    string
+	list     ui.List[issue]
+	raw      []issue
+	sort     sortMode
+	rev      bool // sort order reversed
+	grouping bool // swimlanes derived from the active sort
+	store    *store.Store
+
+	// Navigation tree state (ctrl+p). source drives what fetch() queries;
+	// defaultSource is the config-derived one whose results are cached.
+	navShown      bool
+	navFocus      bool
+	navItems      []navItem
+	navSel        int
+	favs          []navProject
+	favsLoaded    bool
+	navErr        error
+	source        navSource
+	defaultSource navSource
+	lastLoaded    navSource
+	// projectMine narrows a project source to your own issues ('m'). It is
+	// meaningless for My Issues (already yours) and All Issues (the point
+	// is everyone's), so it only applies to project sources.
+	projectMine bool
+
+	// showComments appends issue comments to the preview; fetched lazily
+	// per issue and cached for the session. commentsRev bumps on every
+	// fetch so the memoized preview invalidates. 'c' cycles show+jump,
+	// jump, hide: commentsJumped tracks where in that cycle we are and
+	// jumpPending asks the root model to scroll to commentsLine (recorded
+	// while rendering the preview).
+	showComments   bool
+	comments       map[string]*commentsState
+	commentsRev    int
+	commentsJumped bool
+	jumpPending    bool
+	commentsLine   int
+
+	// notifier posts "new issue" notifications (nil = off). seeded gates
+	// them: only fetches after the first data (cache or live) can notify,
+	// so startup never fires a storm.
+	notifier notify.Notifier
+	seeded   bool
 
 	loading bool
 	err     error
@@ -299,28 +437,47 @@ type viewKeys struct {
 	Branch key.Binding
 	Sort   key.Binding
 	Rev    key.Binding
+	Nav    key.Binding
+	Mine   key.Binding
+	Comm   key.Binding
 }
 
-func New(token string, st *store.Store) *View {
+func New(cfg config.LinearConfig, km config.Keymap, n notify.Notifier, st *store.Store) *View {
+	bind := func(action, desc string, def ...string) key.Binding {
+		return ui.Bind(km.Of("linear", action, def...), "", desc)
+	}
 	v := &View{
-		token:   token,
-		store:   st,
-		list:    ui.NewList[issue](),
-		loading: token != "",
+		cfg:      cfg,
+		token:    cfg.Token,
+		store:    st,
+		notifier: n,
+		list:     ui.NewList[issue](),
+		loading:  cfg.Token != "",
 		keys: viewKeys{
-			Open:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
-			Copy:   key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy url")),
-			Branch: key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "copy branch")),
-			Sort:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
-			Rev:    key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "reverse")),
+			Open:   bind("open", "open", "enter"),
+			Copy:   bind("copy_url", "copy url", "y"),
+			Branch: bind("copy_branch", "copy branch", "b"),
+			Sort:   bind("sort", "sort", "s"),
+			Rev:    bind("reverse", "reverse", "S"),
+			Nav:    bind("nav", "nav pane", "ctrl+p"),
+			Mine:   bind("mine", "only mine", "m"),
+			Comm:   bind("comments", "comments", "c"),
 		},
 	}
+	v.source = sourceForScope(cfg.Filter.Scope)
+	v.defaultSource = v.source
+	v.lastLoaded = v.source
+	v.navShown = cfg.Nav
+	v.showComments = cfg.ShowComments
+	v.rebuildNav()
 	v.list.SetRowHeight(2) // two-line rows: state/identifier + title
+	v.list.Rebind(func(a string, d ...string) []string { return km.Of("list", a, d...) })
 
 	// Paint last run's issues immediately; the live fetch refreshes them.
-	if token != "" {
+	if v.token != "" {
 		if cached, ok := cache.Load[[]issue](cacheName); ok && len(cached) > 0 {
 			v.raw = cached
+			v.seeded = true
 			v.applySort()
 			v.publish(cached)
 			v.loading = false
@@ -356,34 +513,153 @@ func (v *View) Init() tea.Cmd {
 		return nil
 	}
 	v.loading = true
-	return v.fetch()
+	cmds := []tea.Cmd{v.fetch()}
+	if v.navShown && !v.favsLoaded {
+		v.favsLoaded = true
+		cmds = append(cmds, v.fetchFavs())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (v *View) Loading() bool { return v.loading }
 
-const graphqlQuery = `query {
-  viewer {
-    assignedIssues(
-      first: 100
-      filter: { completedAt: { null: true }, canceledAt: { null: true } }
-    ) {
-      nodes {
+const issueFields = `
         identifier title url priority priorityLabel branchName updatedAt description
         state { name type color }
         team { key }
         project { name }
         assignee { displayName }
         labels(first: 10) { nodes { name color } }
-        attachments(first: 20) { nodes { url sourceType title metadata } }
+        attachments(first: 20) { nodes { url sourceType title metadata } }`
+
+// assignedQuery fetches your assigned issues (the default scope); allQuery
+// fetches every issue the token can see, for filter.scope: all.
+const assignedQuery = `query($first: Int!, $filter: IssueFilter) {
+  viewer {
+    assignedIssues(first: $first, filter: $filter) {
+      nodes {` + issueFields + `
       }
     }
   }
 }`
 
+const allQuery = `query($first: Int!, $filter: IssueFilter) {
+  issues(first: $first, filter: $filter, orderBy: updatedAt) {
+    nodes {` + issueFields + `
+    }
+  }
+}`
+
+// inboxQuery lists your Linear inbox: notification events with their issue.
+// Other notification kinds (projects, documents) carry no issue and are
+// skipped.
+const inboxQuery = `query {
+  notifications(first: 50) {
+    nodes {
+      ... on IssueNotification {
+        type readAt createdAt
+        actor { displayName }
+        issue {` + issueFields + `
+        }
+      }
+    }
+  }
+}`
+
+// inboxEventLabel humanizes a notification type ("issueNewComment" ->
+// "commented"). Unknown types fall back to the camel-case words.
+func inboxEventLabel(t string) string {
+	known := map[string]string{
+		"issueNewComment":        "commented",
+		"issueCommentMention":    "mentioned you in a comment",
+		"issueCommentReaction":   "reacted to a comment",
+		"issueEmojiReaction":     "reacted",
+		"issueMention":           "mentioned you",
+		"issueAssignedToYou":     "assigned to you",
+		"issueUnassignedFromYou": "unassigned you",
+		"issueStatusChanged":     "status changed",
+		"issueBlocking":          "blocking your issue",
+		"issueDue":               "due soon",
+		"issueSubscribed":        "subscribed you",
+		"issueCreated":           "created",
+	}
+	if l, ok := known[t]; ok {
+		return l
+	}
+	// "issueSomethingHappened" -> "something happened"
+	t = strings.TrimPrefix(t, "issue")
+	var b strings.Builder
+	for i, r := range t {
+		if r >= 'A' && r <= 'Z' {
+			if i > 0 {
+				b.WriteByte(' ')
+			}
+			b.WriteRune(r + ('a' - 'A'))
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// buildFilter translates the config filter into Linear's IssueFilter shape.
+// The zero value reproduces the historical default: not completed, not
+// canceled.
+func buildFilter(f config.LinearFilter) map[string]any {
+	filter := map[string]any{}
+	if !f.IncludeCompleted {
+		filter["completedAt"] = map[string]any{"null": true}
+	}
+	if !f.IncludeCanceled {
+		filter["canceledAt"] = map[string]any{"null": true}
+	}
+	if len(f.Teams) > 0 {
+		filter["team"] = map[string]any{"key": map[string]any{"in": f.Teams}}
+	}
+	if len(f.Projects) > 0 {
+		filter["project"] = map[string]any{"name": map[string]any{"in": f.Projects}}
+	}
+	if len(f.States) > 0 {
+		filter["state"] = map[string]any{"name": map[string]any{"in": f.States}}
+	}
+	return filter
+}
+
 func (v *View) fetch() tea.Cmd {
 	token := v.token
+	first := v.cfg.Filter.Limit
+	if first <= 0 {
+		first = 100
+	}
+	filter := buildFilter(v.cfg.Filter)
+	src := v.source
+	if src.Kind == "project" && v.projectMine {
+		src.Label = src.Label + " (mine)" // distinct tag: no notify on toggle
+	}
+	query := assignedQuery
+	var vars map[string]any
+	switch src.Kind {
+	case "inbox":
+		query = inboxQuery // no variables: the inbox is its own filter
+	case "project":
+		query = allQuery
+		filter["project"] = map[string]any{"id": map[string]any{"eq": src.ProjectID}}
+		if v.projectMine {
+			filter["assignee"] = map[string]any{"isMe": map[string]any{"eq": true}}
+		}
+		vars = map[string]any{"first": first, "filter": filter}
+	case "all":
+		query = allQuery
+		vars = map[string]any{"first": first, "filter": filter}
+	default:
+		vars = map[string]any{"first": first, "filter": filter}
+	}
 	return func() tea.Msg {
-		body, _ := json.Marshal(map[string]string{"query": graphqlQuery})
+		payload := map[string]any{"query": query}
+		if vars != nil {
+			payload["variables"] = vars
+		}
+		body, _ := json.Marshal(payload)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -407,6 +683,20 @@ func (v *View) fetch() tea.Cmd {
 						Nodes []issue `json:"nodes"`
 					} `json:"assignedIssues"`
 				} `json:"viewer"`
+				Issues struct {
+					Nodes []issue `json:"nodes"`
+				} `json:"issues"`
+				Notifications struct {
+					Nodes []struct {
+						Type      string     `json:"type"`
+						ReadAt    *time.Time `json:"readAt"`
+						CreatedAt time.Time  `json:"createdAt"`
+						Actor     struct {
+							DisplayName string `json:"displayName"`
+						} `json:"actor"`
+						Issue *issue `json:"issue"`
+					} `json:"nodes"`
+				} `json:"notifications"`
 			} `json:"data"`
 			Errors []struct {
 				Message string `json:"message"`
@@ -419,7 +709,30 @@ func (v *View) fetch() tea.Cmd {
 			return errMsg{fmt.Errorf("linear: %s", out.Errors[0].Message)}
 		}
 
-		return loadedMsg(out.Data.Viewer.AssignedIssues.Nodes)
+		nodes := out.Data.Viewer.AssignedIssues.Nodes
+		if len(out.Data.Issues.Nodes) > 0 {
+			nodes = out.Data.Issues.Nodes
+		}
+		if src.Kind == "inbox" {
+			// One row per issue, keeping its latest event (the API returns
+			// notifications newest-first). The row carries the event, not
+			// the bare issue: actor, action, unread state, event time.
+			nodes = nodes[:0]
+			seen := map[string]bool{}
+			for _, n := range out.Data.Notifications.Nodes {
+				if n.Issue == nil || seen[n.Issue.Identifier] {
+					continue
+				}
+				seen[n.Issue.Identifier] = true
+				it := *n.Issue
+				it.InboxEvent = inboxEventLabel(n.Type)
+				it.InboxActor = n.Actor.DisplayName
+				it.InboxUnread = n.ReadAt == nil
+				it.UpdatedAt = n.CreatedAt
+				nodes = append(nodes, it)
+			}
+		}
+		return loadedMsg{issues: nodes, source: src}
 	}
 }
 
@@ -428,29 +741,102 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 	case loadedMsg:
 		v.loading = false
 		v.err = nil
-		v.raw = []issue(msg)
+		var cmd tea.Cmd
+		if msg.source == v.lastLoaded {
+			cmd = v.notifyNew(v.raw, msg.issues)
+		}
+		v.lastLoaded = msg.source
+		v.raw = msg.issues
+		v.seeded = true
 		v.applySort()
-		v.publish([]issue(msg))
-		_ = cache.Save(cacheName, []issue(msg))
+		v.publish(msg.issues)
+		if msg.source == v.defaultSource {
+			_ = cache.Save(cacheName, msg.issues)
+		}
+		return cmd
+	case favsMsg:
+		v.navErr = msg.err
+		v.favs = msg.projects
+		v.rebuildNav()
+		return nil
+	case commentsMsg:
+		if st, ok := v.comments[msg.id]; ok {
+			st.list, st.err, st.done = msg.comments, msg.err, true
+			v.commentsRev++
+		}
 		return nil
 	case errMsg:
 		v.loading = false
 		v.err = msg.err
 		return nil
+	case ui.GroupingMsg:
+		v.grouping = bool(msg)
+		v.applySort()
+		return nil
 	case tea.KeyMsg:
+		// The nav pane toggle works regardless of focus; while the tree has
+		// focus it takes the navigation keys.
+		if key.Matches(msg, v.keys.Nav) {
+			v.navShown = !v.navShown
+			if !v.navShown {
+				v.navFocus = false
+			}
+			v.resizeList()
+			if v.navShown && !v.favsLoaded {
+				v.favsLoaded = true
+				return v.fetchFavs()
+			}
+			return nil
+		}
+		if v.navFocus {
+			return v.updateNav(msg)
+		}
+		if v.navShown && msg.String() == "left" && !v.list.Filtering() {
+			v.navFocus = true
+			return nil
+		}
 		if consumed, cmd := v.list.Update(msg); consumed {
-			return cmd
+			// Selection may have moved with the comments section showing:
+			// fetch the newly-selected issue's comments if uncached, and
+			// restart the 'c' jump cycle.
+			v.commentsJumped = false
+			return tea.Batch(cmd, v.maybeFetchComments())
 		}
 		if v.list.Filtering() {
 			return nil
 		}
 		switch {
+		case key.Matches(msg, v.keys.Comm):
+			// Cycle: hidden -> show and jump to the section; visible (e.g.
+			// enabled in config) -> jump; already jumped -> hide.
+			switch {
+			case !v.showComments:
+				v.showComments = true
+				v.jumpPending, v.commentsJumped = true, true
+				return v.maybeFetchComments()
+			case !v.commentsJumped:
+				v.jumpPending, v.commentsJumped = true, true
+				return nil
+			default:
+				v.showComments = false
+				v.commentsJumped = false
+				return nil
+			}
 		case key.Matches(msg, v.keys.Open):
 			return ui.OpenURL(v.list.Selected().URL)
 		case key.Matches(msg, v.keys.Copy):
 			return copyCmd(v.list.Selected().URL)
 		case key.Matches(msg, v.keys.Branch):
 			return copyCmd(v.list.Selected().BranchName)
+		case key.Matches(msg, v.keys.Mine):
+			// Contextual: only a project source distinguishes "mine" from
+			// "everyone's"; the fixed sources already imply it.
+			if v.source.Kind != "project" {
+				return nil
+			}
+			v.projectMine = !v.projectMine
+			v.loading = true
+			return v.fetch()
 		case key.Matches(msg, v.keys.Sort):
 			v.sort = sortOrder[(int(v.sort)+1)%len(sortOrder)]
 			v.applySort()
@@ -464,8 +850,71 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
+// newIssues returns the issues in next that aren't in prev, by identifier.
+func newIssues(prev, next []issue) []issue {
+	known := make(map[string]bool, len(prev))
+	for _, i := range prev {
+		known[i.Identifier] = true
+	}
+	var out []issue
+	for _, i := range next {
+		if !known[i.Identifier] {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// notifyNew posts a notification for issues that appeared since the last
+// fetch. nil unless the view was already seeded with data (so the first
+// paint stays quiet) and a notifier is configured.
+func (v *View) notifyNew(prev, next []issue) tea.Cmd {
+	if v.notifier == nil || !v.seeded {
+		return nil
+	}
+	fresh := newIssues(prev, next)
+	if len(fresh) == 0 {
+		return nil
+	}
+	title := "Linear: new issue"
+	body := fresh[0].Identifier + ": " + fresh[0].Title
+	if len(fresh) > 1 {
+		title = fmt.Sprintf("Linear: %d new issues", len(fresh))
+		body = ""
+		for i, is := range fresh {
+			if i > 0 {
+				body += "\n"
+			}
+			body += is.Identifier + ": " + is.Title
+		}
+	}
+	n := v.notifier
+	return func() tea.Msg { return n.Notify(title, body) }
+}
+
+// applySort rebuilds the list: the active sort, plus swimlane headers when
+// grouping is on and this sort declares a grouping dimension.
 func (v *View) applySort() {
-	v.list.SetItems(sortIssues(v.raw, v.sort, v.rev))
+	items := sortIssues(v.raw, v.sort, v.rev)
+	if v.grouping {
+		if label := groupLabelFn(v.sort); label != nil {
+			items = ui.InsertGroups(items, label, func(l string) issue { return issue{Separator: l} })
+			// The lane header already names the group; drop the redundant
+			// per-row copy of that dimension.
+			for idx := range items {
+				if items[idx].Separator != "" {
+					continue
+				}
+				switch v.sort {
+				case sortStatus:
+					items[idx].HideStatus = true
+				case sortProject:
+					items[idx].HideProject = true
+				}
+			}
+		}
+	}
+	v.list.SetItems(items)
 }
 
 // ScrollList moves the list selection by n rows (mouse wheel).
@@ -473,19 +922,33 @@ func (v *View) ScrollList(n int) { v.list.ScrollBy(n) }
 
 func (v *View) SetSize(listW, prevW, h int) {
 	v.listW, v.prevW, v.height = listW, prevW, h
-	v.list.SetSize(listW, max(1, h-1))
+	v.resizeList()
 	v.bodyKey = ""
+}
+
+// resizeList gives the list whatever the nav tree doesn't take. The tree
+// block is measured as rendered, so border accounting can't drift.
+func (v *View) resizeList() {
+	w := v.listW
+	if v.navShown {
+		w -= lipgloss.Width(v.navView())
+	}
+	v.list.SetSize(max(1, w), max(1, v.height-1))
 }
 
 func (v *View) ListView() string {
 	if v.token == "" {
-		return faint.Render(v.setupHint())
+		return ui.Faint.Render(v.setupHint())
 	}
 	header := v.list.FilterLine()
 	if header == "" {
-		header = faint.Render(v.statusText())
+		header = ui.Faint.Render(v.statusText())
 	}
-	return header + "\n" + v.list.View()
+	right := header + "\n" + v.list.View()
+	if v.navShown {
+		return lipgloss.JoinHorizontal(lipgloss.Top, v.navView(), right)
+	}
+	return right
 }
 
 func (v *View) setupHint() string {
@@ -503,26 +966,31 @@ func (v *View) statusText() string {
 	case v.err != nil:
 		return "Error (ctrl+r to retry)"
 	default:
-		return fmt.Sprintf("%d issues · sort: %s%s", v.list.Total(), sortName[v.sort], ui.RevMarker(v.rev))
+		src := v.source.Label
+		if v.source.Kind == "project" && v.projectMine {
+			src += " (mine)"
+		}
+		return fmt.Sprintf("%d issues · %s · sort: %s%s",
+			len(v.raw), src, sortName[v.sort], ui.RevMarker(v.rev))
 	}
 }
 
 func (v *View) PreviewView() string {
 	if v.token == "" {
-		return faint.Width(v.prevW).Render(v.setupHint())
+		return ui.Faint.Width(v.prevW).Render(v.setupHint())
 	}
 	if v.err != nil {
-		return red.Width(v.prevW).Render(v.err.Error())
+		return ui.Red.Width(v.prevW).Render(v.err.Error())
 	}
 	i := v.list.Selected()
 	if i.Identifier == "" {
-		return faint.Render("No issue selected.")
+		return ui.Faint.Render("No issue selected.")
 	}
 
 	var b strings.Builder
-	b.WriteString(bold.Width(v.prevW).Render(i.Title))
+	b.WriteString(ui.Bold.Width(v.prevW).Render(i.Title))
 	b.WriteByte('\n')
-	b.WriteString(grey.Render(fmt.Sprintf("%s · %s ago", i.Identifier, ui.Age(i.UpdatedAt))))
+	b.WriteString(ui.Dim.Render(fmt.Sprintf("%s · %s ago", i.Identifier, ui.Age(i.UpdatedAt))))
 	b.WriteByte('\n')
 
 	statusLine := hexStyle(i.State.Color).Render(i.State.Name)
@@ -530,13 +998,13 @@ func (v *View) PreviewView() string {
 		statusLine += "   " + i.priorityCell() + " " + i.PriorityLabel
 	}
 	if i.Project.Name != "" {
-		statusLine += "   " + grey.Render("◇ "+i.Project.Name)
+		statusLine += "   " + ui.Dim.Render("◇ "+i.Project.Name)
 	}
 	b.WriteString(statusLine)
 	b.WriteByte('\n')
 
 	if i.BranchName != "" {
-		b.WriteString(grey.Render(" " + i.BranchName))
+		b.WriteString(ui.Dim.Render(" " + i.BranchName))
 		b.WriteByte('\n')
 	}
 	if pills := labelPills(i.Labels.Nodes); pills != "" {
@@ -544,30 +1012,40 @@ func (v *View) PreviewView() string {
 		b.WriteByte('\n')
 	}
 
-	b.WriteString(grey.Render(strings.Repeat("─", min(v.prevW, 60))))
+	b.WriteString(ui.Dim.Render(strings.Repeat("─", min(v.prevW, 60))))
 	b.WriteByte('\n')
 	b.WriteString(v.renderedBody(i))
+	if v.showComments {
+		b.WriteByte('\n')
+		// Record where the section starts so the 'c' jump can target it.
+		v.commentsLine = strings.Count(b.String(), "\n") + 1
+		b.WriteString(v.renderComments(i.Identifier, v.prevW))
+	}
 	return b.String()
+}
+
+// TakePreviewJump implements the root model's preview-jump hook: when a 'c'
+// press requested it, scroll to the comments section. The preview renders
+// first so commentsLine reflects the current selection and toggle state.
+func (v *View) TakePreviewJump() (int, bool) {
+	if !v.jumpPending {
+		return 0, false
+	}
+	v.jumpPending = false
+	_ = v.PreviewView()
+	return v.commentsLine, true
 }
 
 func (v *View) renderedBody(i issue) string {
 	desc := strings.TrimSpace(i.Description)
 	if desc == "" {
-		return faint.Render("(no description)")
+		return ui.Faint.Render("(no description)")
 	}
-	key := i.Identifier + ":" + fmt.Sprint(v.prevW)
+	key := fmt.Sprintf("%s:%d:%d", i.Identifier, v.prevW, ui.PaletteGen())
 	if v.bodyKey == key {
 		return v.body
 	}
-	out := desc
-	if r, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle("dark"),
-		glamour.WithWordWrap(max(20, v.prevW)),
-	); err == nil {
-		if rendered, rerr := r.Render(desc); rerr == nil {
-			out = strings.TrimRight(rendered, "\n")
-		}
-	}
+	out := ui.Markdown(desc, v.prevW)
 	v.bodyKey, v.body = key, out
 	return out
 }
@@ -576,10 +1054,10 @@ func (v *View) Bindings() []key.Binding {
 	if v.token == "" {
 		return nil
 	}
-	return []key.Binding{v.keys.Open, v.keys.Copy, v.keys.Branch, v.keys.Sort, v.keys.Rev}
+	return []key.Binding{v.keys.Open, v.keys.Comm, v.keys.Copy, v.keys.Branch, v.keys.Sort, v.keys.Rev}
 }
 
-func (v *View) Status() string { return grey.Render(v.statusText()) }
+func (v *View) Status() string { return ui.Dim.Render(v.statusText()) }
 
 func (v *View) InputActive() bool { return v.list.Filtering() }
 
@@ -595,7 +1073,15 @@ func (v *View) SetFilter(query string, enabled []string, caseSensitive bool) {
 	v.list.SetQuery(query)
 }
 
-func (v *View) PreviewKey() string { return v.list.Selected().Identifier }
+// PreviewKey folds in the comments toggle and fetch revision so the preview
+// scroll resets on toggle and re-renders when comments land.
+func (v *View) PreviewKey() string {
+	k := v.list.Selected().Identifier
+	if v.showComments {
+		k += fmt.Sprintf("#comments%d", v.commentsRev)
+	}
+	return k
+}
 
 // RefKind / HasRef / SelectRef implement ui.RefTarget so other views can jump
 // to an issue here (e.g. a PR that references it).

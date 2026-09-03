@@ -54,7 +54,7 @@ func main() {
 		case "sessions":
 			views = append(views, sessions.New(st))
 		case "linear":
-			views = append(views, linear.New(cfg.Linear.Token, st))
+			views = append(views, linear.New(cfg.Linear, cfg.Keys, notifier, st))
 		}
 	}
 
