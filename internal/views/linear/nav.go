@@ -211,7 +211,9 @@ func (v *View) navView() string {
 			marker = ui.Accent.Render("▌") + " "
 		}
 		icon := navIcon(it.source.Kind)
-		label := ui.Truncate(it.source.Label, max(1, w-4-lipgloss.Width(icon)))
+		// The marker column is exactly 2 cells; the icon is measured, not
+		// assumed, since nerd-font glyph widths vary by environment.
+		label := ui.Truncate(it.source.Label, max(1, w-2-lipgloss.Width(icon)))
 		switch {
 		case v.navFocus && i == v.navSel:
 			label = ui.Accent.Bold(true).Render("› ") + ui.Accent.Render(icon+label)
