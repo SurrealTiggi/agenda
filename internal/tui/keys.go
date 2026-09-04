@@ -1,6 +1,11 @@
 package tui
 
-import "charm.land/bubbles/v2/key"
+import (
+	"charm.land/bubbles/v2/key"
+
+	"github.com/obliadp/agenda/internal/config"
+	"github.com/obliadp/agenda/internal/ui"
+)
 
 // globalKeys are handled by the root model regardless of the active view.
 type globalKeys struct {
@@ -11,54 +16,38 @@ type globalKeys struct {
 	Help        key.Binding
 	Follow      key.Binding
 	Filter      key.Binding
+	Config      key.Binding
+	Zoom        key.Binding
 	PreviewUp   key.Binding
 	PreviewDown key.Binding
 	PreviewPgUp key.Binding
 	PreviewPgDn key.Binding
 }
 
-func defaultKeys() globalKeys {
-	return globalKeys{
-		NextView: key.NewBinding(
-			key.WithKeys("tab", "L"),
-			key.WithHelp("tab", "next view"),
-		),
-		PrevView: key.NewBinding(
-			key.WithKeys("shift+tab", "H"),
-			key.WithHelp("⇧tab", "prev view"),
-		),
-		Refresh: key.NewBinding(
-			key.WithKeys("ctrl+r"),
-			key.WithHelp("ctrl+r", "refresh"),
-		),
-		Quit: key.NewBinding(
-			key.WithKeys("q", "ctrl+c"),
-			key.WithHelp("q", "quit"),
-		),
-		Help: key.NewBinding(
-			key.WithKeys("?"),
-			key.WithHelp("?", "help"),
-		),
-		Follow: key.NewBinding(
-			key.WithKeys("l"),
-			key.WithHelp("l", "related"),
-		),
-		Filter: key.NewBinding(
-			key.WithKeys("f"),
-			key.WithHelp("f", "filter"),
-		),
-		PreviewUp: key.NewBinding(
-			key.WithKeys("shift+up"),
-			key.WithHelp("⇧↑↓", "scroll preview"),
-		),
-		PreviewDown: key.NewBinding(
-			key.WithKeys("shift+down"),
-		),
-		PreviewPgUp: key.NewBinding(
-			key.WithKeys("pgup"),
-		),
-		PreviewPgDn: key.NewBinding(
-			key.WithKeys("pgdown"),
-		),
+// newKeys resolves the global bindings from config overrides (scope "global"),
+// falling back to the defaults.
+func newKeys(km config.Keymap) globalKeys {
+	bind := func(action, helpKey, desc string, def ...string) key.Binding {
+		return ui.Bind(km.Of("global", action, def...), helpKey, desc)
 	}
+	g := globalKeys{
+		NextView:    bind("next_view", "tab", "next view", "tab", "L"),
+		PrevView:    bind("prev_view", "", "prev view", "shift+tab", "H"),
+		Refresh:     bind("refresh", "", "refresh", "ctrl+r"),
+		Quit:        bind("quit", "", "quit", "q", "ctrl+c"),
+		Help:        bind("help", "", "help", "?"),
+		Follow:      bind("follow", "", "related", "l"),
+		Filter:      bind("filter", "", "filter", "f"),
+		Config:      bind("config", "", "config", "ctrl+s"),
+		Zoom:        bind("zoom", "", "zoom", "z"),
+		PreviewUp:   bind("preview_up", "", "scroll preview", "shift+up"),
+		PreviewDown: bind("preview_down", "", "", "shift+down"),
+		PreviewPgUp: bind("preview_pgup", "", "", "pgup"),
+		PreviewPgDn: bind("preview_pgdn", "", "", "pgdown"),
+	}
+	// With the default up/down pair, show the combined glyph the README uses.
+	if !km.Has("global", "preview_up") && !km.Has("global", "preview_down") {
+		g.PreviewUp = key.NewBinding(key.WithKeys("shift+up"), key.WithHelp("⇧↑↓", "scroll preview"))
+	}
+	return g
 }
