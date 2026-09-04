@@ -16,33 +16,19 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/obliadp/agenda/internal/config"
 	"github.com/obliadp/agenda/internal/store"
 	"github.com/obliadp/agenda/internal/ui"
-)
-
-// --- styles -----------------------------------------------------------------
-
-func fg(c string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(c)) }
-
-var (
-	magenta   = fg("5")
-	green     = fg("2")
-	blue      = fg("4")
-	cyan      = fg("6")
-	yellow    = fg("3")
-	grey      = fg("8")
-	faint     = lipgloss.NewStyle().Faint(true)
-	costStyle = green.Bold(true)
 )
 
 func (s session) toolStyle() lipgloss.Style {
 	switch s.Tool {
 	case toolCodex:
-		return green
+		return ui.Green
 	case toolAgy:
-		return blue
+		return ui.Blue
 	default:
-		return magenta
+		return ui.Magenta
 	}
 }
 
@@ -52,6 +38,9 @@ func (s session) titleOr() string {
 	}
 	return s.Title
 }
+
+// Selectable implements ui.NonSelectable: group headers never hold the cursor.
+func (s session) Selectable() bool { return s.Separator == "" }
 
 // isAgent reports whether this is a programmatic (SDK/command/hook-spawned)
 // session rather than one the user typed interactively. Only Claude logs carry
@@ -72,10 +61,16 @@ var defaultFields = []string{"tool", "cwd", "title", "model"}
 // body is deliberately excluded here: it's huge and would make a poor identity
 // key.
 func (s session) Filter() string {
+	if s.Separator != "" {
+		return "\x00sep:" + s.Separator
+	}
 	return fmt.Sprintf("%s %s %s %s", s.Tool, shortenPath(s.Cwd), s.Title, s.Model)
 }
 
 func (s session) Fields() []ui.Field {
+	if s.Separator != "" {
+		return nil
+	}
 	return []ui.Field{
 		{Name: "tool", Text: string(s.Tool)},
 		{Name: "cwd", Text: shortenPath(s.Cwd)},
@@ -86,27 +81,30 @@ func (s session) Fields() []ui.Field {
 }
 
 func (s session) Render(width int, selected bool, hl ui.Highlighter) string {
+	if s.Separator != "" {
+		return ui.GroupHeader(s.Separator, width)
+	}
 	// Glyph column: the agent's Nerd Font icon (claude/codex/antigravity)
 	// instead of its spelled-out name. Programmatic (agent) sessions get a muted
 	// gear prefix so they read as a distinct class from human ones.
 	glyphs := ui.AgentIcon(string(s.Tool))
 	if s.isAgent() {
-		glyphs = grey.Render("⚙") + glyphs
+		glyphs = ui.Dim.Render("⚙") + glyphs
 	}
 
 	// metaPlain (width measurement) and metaStyled must carry the same text; the
 	// rare session that spawned agent sub-sessions gets a "spawned N" hint.
 	cwd := shortenPath(s.Cwd)
-	metaStyled := cyan.Render(cwd)
+	metaStyled := ui.Cyan.Render(cwd)
 	if s.Spawned > 0 {
 		hint := fmt.Sprintf("⤷ spawned %d", s.Spawned)
 		cwd += "  " + hint
-		metaStyled += "  " + grey.Render(hint)
+		metaStyled += "  " + ui.Dim.Render(hint)
 	}
 
-	right := yellow.Render(strconv.Itoa(s.Msgs)) + "  " + grey.Render(ui.Age(s.Updated))
+	right := ui.Yellow.Render(strconv.Itoa(s.Msgs)) + "  " + ui.Dim.Render(ui.Age(s.Updated))
 	if c := fmtCost(s.Cost); c != "" {
-		right = costStyle.Render(c) + "  " + right
+		right = ui.Green.Bold(true).Render(c) + "  " + right
 	}
 
 	return ui.TwoLineRow(width, selected, glyphs, cwd, metaStyled, right, s.titleOr(), hl)
@@ -128,6 +126,21 @@ var sortOrder = []sortMode{sortRecent, sortCwd, sortTool, sortMsgs, sortCost}
 var sortName = map[sortMode]string{
 	sortRecent: "recent", sortCwd: "cwd", sortTool: "tool",
 	sortMsgs: "msgs", sortCost: "cost",
+}
+
+// groupLabelFn returns the swimlane label for a sort mode. msgs has no
+// sensible buckets, so it stays flat (nil) even with grouping on.
+func groupLabelFn(mode sortMode) func(session) string {
+	switch mode {
+	case sortRecent:
+		return func(s session) string { return ui.TimeBucket(s.Updated) }
+	case sortCwd:
+		return func(s session) string { return shortenPath(s.Cwd) }
+	case sortTool:
+		return func(s session) string { return string(s.Tool) }
+	default:
+		return nil
+	}
 }
 
 // sortSessions returns a sorted copy of in. When rev is set the comparison is
@@ -178,11 +191,12 @@ type resumedMsg struct{}
 // --- view -------------------------------------------------------------------
 
 type View struct {
-	list  ui.List[session]
-	raw   []session
-	sort  sortMode
-	rev   bool // sort order reversed
-	store *store.Store
+	list     ui.List[session]
+	raw      []session
+	sort     sortMode
+	rev      bool // sort order reversed
+	grouping bool // swimlanes derived from the active sort
+	store    *store.Store
 
 	showAgents bool // when false, programmatic (SDK/agent) sessions are hidden
 	confirmDel bool // armed delete: next y/enter deletes the selected session
@@ -218,21 +232,25 @@ type viewKeys struct {
 	Expand key.Binding
 }
 
-func New(st *store.Store) *View {
+func New(km config.Keymap, st *store.Store) *View {
+	bind := func(action, desc string, def ...string) key.Binding {
+		return ui.Bind(km.Of("sessions", action, def...), "", desc)
+	}
 	v := &View{
 		store:   st,
 		list:    ui.NewList[session](),
 		loading: true,
 		keys: viewKeys{
-			Resume: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "resume")),
-			Sort:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
-			Rev:    key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "reverse")),
-			Agents: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "agents")),
-			Delete: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
-			Expand: key.NewBinding(key.WithKeys("E"), key.WithHelp("⇧e", "expand")),
+			Resume: bind("resume", "resume", "enter"),
+			Sort:   bind("sort", "sort", "s"),
+			Rev:    bind("reverse", "reverse", "S"),
+			Agents: bind("agents", "agents", "a"),
+			Delete: bind("delete", "delete", "d"),
+			Expand: bind("expand", "expand", "E"),
 		},
 	}
 	v.list.SetRowHeight(2) // two-line rows: cwd + title
+	v.list.Rebind(func(a string, d ...string) []string { return km.Of("list", a, d...) })
 	// Default filter scope excludes the "text" body field; the user enables it in
 	// the filter modal (f) to search inside conversations.
 	v.list.SetEnabledFields(defaultFields)
@@ -254,7 +272,9 @@ func (v *View) fetch() tea.Cmd {
 
 // applyView filters raw by the agent toggle, then sorts, then hands the result
 // to the list. Cost totals (see statusText) are computed over raw regardless, so
-// hiding agent sessions never hides their spend.
+// hiding agent sessions never hides their spend. With grouping on and a sort
+// that declares a dimension, swimlane headers land wherever the label changes,
+// so with agents shown each partition gets its own lanes.
 func (v *View) applyView() {
 	shown := v.raw
 	if !v.showAgents {
@@ -280,6 +300,11 @@ func (v *View) applyView() {
 		}
 		sorted = append(humans, agents...)
 	}
+	if v.grouping {
+		if label := groupLabelFn(v.sort); label != nil {
+			sorted = ui.InsertGroups(sorted, label, func(l string) session { return session{Separator: l} })
+		}
+	}
 	v.list.SetItems(sorted)
 }
 
@@ -295,6 +320,10 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 	case resumedMsg:
 		// Resuming likely appended new turns; rescan so order/age stay accurate.
 		return v.fetch()
+	case ui.GroupingMsg:
+		v.grouping = bool(msg)
+		v.applyView()
+		return nil
 	case tea.KeyMsg:
 		// A pending delete confirmation captures the next key.
 		if v.confirmDel {
@@ -392,7 +421,7 @@ func (v *View) SetSize(listW, prevW, h int) {
 func (v *View) ListView() string {
 	header := v.list.FilterLine()
 	if header == "" {
-		header = faint.Render(v.statusText())
+		header = ui.Faint.Render(v.statusText())
 	}
 	return header + "\n" + v.list.View()
 }
@@ -400,7 +429,7 @@ func (v *View) ListView() string {
 func (v *View) statusText() string {
 	if v.confirmDel {
 		s := v.list.Selected()
-		return yellow.Render(fmt.Sprintf("Delete %q? (y/n)", ui.Truncate(s.titleOr(), 50)))
+		return ui.Yellow.Render(fmt.Sprintf("Delete %q? (y/n)", ui.Truncate(s.titleOr(), 50)))
 	}
 	if v.loading {
 		return "Scanning sessions…"
@@ -465,7 +494,7 @@ func (v *View) matchCount(s session) int {
 func (v *View) PreviewView() string {
 	s := v.list.Selected()
 	if s.Path == "" {
-		return faint.Render("No session selected.")
+		return ui.Faint.Render("No session selected.")
 	}
 
 	var b strings.Builder
@@ -477,40 +506,40 @@ func (v *View) PreviewView() string {
 	if s.Model != "" {
 		header += " · " + s.Model
 	}
-	b.WriteString(grey.Render(header))
+	b.WriteString(ui.Dim.Render(header))
 	b.WriteString("\n")
 	cost := fmtCost(s.Cost)
 	if cost == "" {
 		cost = "–"
 	}
-	b.WriteString(grey.Render("cost: "))
-	b.WriteString(costStyle.Render(cost))
+	b.WriteString(ui.Dim.Render("cost: "))
+	b.WriteString(ui.Green.Bold(true).Render(cost))
 	b.WriteString("\n")
 	// Token usage breakdown, under cost (Claude only; zero for other tools).
 	if s.InTok+s.OutTok+s.CacheTok > 0 {
-		b.WriteString(grey.Render(fmt.Sprintf("tokens: in %s · out %s · cache %s",
+		b.WriteString(ui.Dim.Render(fmt.Sprintf("tokens: in %s · out %s · cache %s",
 			fmtTokens(s.InTok), fmtTokens(s.OutTok), fmtTokens(s.CacheTok))))
 		b.WriteString("\n")
 	}
-	b.WriteString(cyan.Render(shortenPath(s.Cwd)))
+	b.WriteString(ui.Cyan.Render(shortenPath(s.Cwd)))
 	b.WriteString("\n")
-	b.WriteString(faint.Render(s.SessionID))
+	b.WriteString(ui.Faint.Render(s.SessionID))
 	b.WriteString("\n")
-	b.WriteString(grey.Render(strings.Repeat("─", min(v.prevW, 60))))
+	b.WriteString(ui.Dim.Render(strings.Repeat("─", min(v.prevW, 60))))
 	b.WriteString("\n")
 
 	turns := v.cachedTurns(s)
 	if len(turns) == 0 {
-		b.WriteString(faint.Render("(no conversation content)"))
+		b.WriteString(ui.Faint.Render("(no conversation content)"))
 		return b.String()
 	}
 
 	hl := ui.Highlighter{Query: v.list.Query(), CaseSensitive: v.list.CaseSensitive()}
 	wrap := lipgloss.NewStyle().Width(max(20, v.prevW))
 	writeTurn := func(t turn) {
-		label, style := "● ai ", blue
+		label, style := "● ai ", ui.Blue
 		if t.role == "user" {
-			label, style = "▶ you", green
+			label, style = "▶ you", ui.Green
 		}
 		b.WriteString(style.Render(label))
 		b.WriteByte(' ')
@@ -531,7 +560,7 @@ func (v *View) PreviewView() string {
 		}
 		v.hasHiddenTurns = false // matches-only: nothing to expand into
 		if shown == 0 {
-			b.WriteString(faint.Render("(no matching turns in this session)"))
+			b.WriteString(ui.Faint.Render("(no matching turns in this session)"))
 		}
 		return b.String()
 	}
@@ -542,7 +571,7 @@ func (v *View) PreviewView() string {
 	}
 	v.hasHiddenTurns = start > 0
 	if start > 0 {
-		b.WriteString(faint.Render(fmt.Sprintf("… %d earlier turns (⇧e to expand) …", start)))
+		b.WriteString(ui.Faint.Render(fmt.Sprintf("… %d earlier turns (⇧e to expand) …", start)))
 		b.WriteString("\n\n")
 	}
 	for _, t := range turns[start:] {
@@ -591,9 +620,9 @@ func (v *View) Status() string {
 	// Surface the match count for the selected session so the user knows there's
 	// something to expand into.
 	if n := v.matchCount(v.list.Selected()); n > 0 {
-		return green.Render(fmt.Sprintf("%d matches", n)) + grey.Render(" · "+v.statusText())
+		return ui.Green.Render(fmt.Sprintf("%d matches", n)) + ui.Dim.Render(" · "+v.statusText())
 	}
-	return grey.Render(v.statusText())
+	return ui.Dim.Render(v.statusText())
 }
 
 func (v *View) InputActive() bool { return v.list.Filtering() || v.confirmDel }

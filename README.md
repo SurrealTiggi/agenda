@@ -52,6 +52,9 @@ Linear in one switcher.
 go install github.com/obliadp/agenda@latest
 ```
 
+`agenda` opens on the first tab; `agenda prs` / `agenda sessions` /
+`agenda linear` open straight on that view.
+
 Requirements:
 - A **Nerd Font** in your terminal (for the status glyphs) — same as gh-dash.
 - The **`gh` CLI**, authenticated (`gh auth login`) — powers the PRs view.
@@ -73,6 +76,10 @@ linear:
 
 ## Keys
 
+Every binding below is the default; all of them are remappable under `keys:`
+in the config (see [`config.example.yml`](./config.example.yml)). `?` shows
+the full keymap in-app.
+
 | Scope | Key | Action |
 |-------|-----|--------|
 | Global | `tab` / `shift+tab` | switch view |
@@ -81,12 +88,24 @@ linear:
 | Global | `f` | field-scoped filter popup |
 | Global | `j`/`k`, `g`/`G`, `ctrl+d`/`ctrl+u` | navigate list |
 | Global | `shift+↑`/`shift+↓`, `PgUp`/`PgDn` | scroll preview |
+| Global | `z` | zoom the preview pane to full width (tmux-style) |
 | Global | `l` | follow references — opens a picker of related items |
+| Global | `ctrl+s` | config overlay (theme, refresh, notifications, views…) |
 | Global | `ctrl+r` | refresh |
+| Global | `?` | help: every binding for the focused view |
 | Global | `q` | quit |
-| PRs | `enter` · `d` · `y` · `s`/`S` | open · diff · copy URL · cycle sort / reverse it |
+| PRs | `enter` · `y` · `s`/`S` | open · copy URL · cycle sort / reverse it |
+| PRs | `d` | diff: `less` pager by default, right pane with `github.diff_pane` |
+| PRs | `c` | toggle right pane to the comments/threads view |
+| PRs | `w` | toggle the "Review Requested" section |
+| PRs | `r` | review popup: approve / comment / request changes / view diff |
+| PRs | `]` / `[` | jump between inline review threads |
+| PRs | `R` · `X` · `C` | reply to thread · resolve thread · new PR comment |
 | Sessions | `enter` · `s`/`S` | resume · cycle sort / reverse it |
 | Linear | `enter` · `y` · `b` · `s`/`S` | open · copy URL · copy branch · cycle sort / reverse it |
+| Linear | `ctrl+p`, then `←`/`→` | toggle the nav tree (Inbox / My Issues / All Issues / pinned projects); arrows move between tree and list |
+| Linear | `m` | inside a project source: toggle only-mine vs everyone's issues |
+| Linear | `c` | show comments and jump to them; press again to hide (jump-only when enabled via config) |
 | Reference picker | `enter` · `o` · `esc` | follow · open in browser · cancel |
 | Filter popup (`f`) | `↑`/`↓` (or `j`/`k`) · `space` · `enter` · `esc` | move · toggle field · apply · cancel |
 
@@ -99,24 +118,62 @@ cursor walks the whole popup: the query box at the top, then the field toggles,
 then the case-sensitive row. `1`…`9` jump straight to a view by its tab position
 (shown as a number prefix in each tab label).
 
+## Configuration highlights
+
+Everything below is opt-in, and every default matches the original behavior:
+out of the box agenda looks and acts as it did before these options existed.
+
+- **In-app config**: `ctrl+s` opens an overlay editable from anywhere: cycle
+  the color theme live, edit refresh intervals, toggle notifications (with a
+  test-notification button), views, and the Linear filter basics. An "edit
+  keybinds" entry lists every binding grouped by scope and rebinds them on
+  the fly with collision detection. Changes write back to `config.yml`
+  without touching your comments.
+- **Themes**: built-ins (`catppuccin-mocha`/`-latte`, `tokyonight`,
+  `gruvbox`, `dracula`, `nord`, `rose-pine`) plus per-color overrides;
+  `default` keeps your terminal's ANSI palette. Previews render markdown
+  with heading icons, glyph checkboxes, readable inline code, and
+  gutter-marked code blocks.
+- **Auto-refresh**: a global `refresh.every` interval with per-view
+  overrides.
+- **Notifications**: when a PR newly requests your review or a Linear issue
+  is newly assigned to you, get an in-app toast (`popup: terminal`) or an OS
+  notification (`popup: desktop`), optionally with a sound. Bodies summarize
+  the new items (`repo#N: title (@author)`).
+- **Keybinds**: every action remappable per scope.
+- **Swimlanes**: `grouping: true` renders every view's list as sections
+  derived from the active sort: status lanes for Linear's status sort,
+  repo/review/checks/size lanes for PRs, cwd/tool lanes for sessions, and
+  Today/Yesterday/7d/30d/Older buckets for date sorts. Sorts with no
+  sensible buckets stay flat. `s`/`S` behave exactly as before; the lanes
+  just follow whatever sort is active.
+
 ## Views
 
 - **PRs** — fetched via `gh api graphql`. Shows state/CI/review glyphs, `+/−`
   diff size, comments, and labels; preview renders the description with Glamour.
-  `s` cycles sort (date / review / checks / repo / size). `review` and `checks`
+  `s` cycles sort (date / review / checks / repo / size / author). `review` and `checks`
   are worst-first — changes requested and failing checks float to the top,
   approved and green sink to the bottom — and `size` puts the smallest diff
-  first. All modes tie-break on recency.
+  first. All modes tie-break on recency. `w` adds PRs waiting on your review
+  under a separator (`github.show_review_requested` makes that the default).
+  `d` pages the diff through `less`; with `github.diff_pane` it renders in
+  the right pane instead, with inline review threads pinned to the lines
+  they discuss. `c` shows the full conversation. `r`/`a` review and approve
+  via `gh`.
 - **Sessions** — scans `~/.claude`, `~/.codex`, and `~/.gemini/antigravity-cli`,
   caching parsed metadata by file signature. Each agent is shown as a Nerd Font
   icon (claude = robot, codex = code, antigravity = rocket) rather than its
   name. `enter` resumes the selected session in its original directory; `s`
   cycles sort (recent / cwd / tool / msgs / cost). Originally a Python tool,
   ported to Go.
-- **Linear** — issues assigned to you (active states), via the Linear GraphQL
-  API. Preview shows status, priority, labels, branch name, and the description.
-  `s` cycles sort (date / status); status groups by workflow state — in progress,
-  then todo, triage, backlog — and breaks ties on priority, then recency.
+- **Linear**: issues assigned to you (active states by default; the fetch
+  filter is configurable), via the Linear GraphQL API. Preview shows status,
+  priority, labels, branch name, and the description. `s` cycles sort
+  (date / status / project / priority); status orders by workflow state (in
+  progress, then todo, triage, backlog) and breaks ties on priority, then
+  recency. With `grouping: true`, each sort renders its matching swimlanes
+  under styled section headers.
 
 In every view `s` cycles the sort mode and `S` reverses whatever mode is active,
 flipping the primary key and its tie-breaks together: `S` over `date` gives

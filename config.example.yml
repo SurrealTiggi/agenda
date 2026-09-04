@@ -6,20 +6,147 @@
 # Linear view needs configuration — a personal API key.
 
 # Which views to show, in tab order. Recognised: prs, sessions, linear.
+# A view can also be dropped with its `enabled: false` flag below, without
+# reordering this list.
 views: [prs, sessions, linear]
 
+# Render lists as swimlanes derived from the active sort: Linear sorted by
+# status gets status lanes, date sorts get Today/Yesterday/7d/30d/Older
+# buckets, sessions by cwd get cwd lanes, and so on. Sorts with no sensible
+# buckets (e.g. sessions by msgs) stay flat. Off by default: flat lists.
+grouping: false
+
+theme:
+  # Built-in palette: default, catppuccin-mocha, catppuccin-latte, tokyonight,
+  # gruvbox, dracula, nord, rose-pine. "default" uses your terminal's ANSI
+  # colors.
+  name: default
+  # Override individual colors on top of the named theme. Values are hex or
+  # ANSI color numbers. Keys: accent, border, text, dim, green, red, yellow,
+  # blue, cyan, magenta.
+  # palette:
+  #   accent: "#f5c2e7"
+  # Decorative Nerd Font icons (tab and nav-tree icons). The core status
+  # glyphs always assume a Nerd Font (as upstream does); this drops the
+  # extras for plain-font setups.
+  glyphs: true
+
+# Background auto-refresh. `every` is the global default; the per-view keys
+# override it ("0" disables refresh for just that view). Off when absent.
+refresh:
+  every: "0"     # e.g. "5m"
+  # prs: 2m
+  # linear: 10m
+  # sessions: "0"
+
+# Notify when something new appears: a PR waiting on your review, or a Linear
+# issue newly assigned to you. The popup channel is "off" (default),
+# "terminal" (an in-app toast, top right), or "desktop" (an OS
+# notification). Sound defaults on once the popup is on. Audition both via
+# ctrl+s -> "send test notification".
+notifications:
+  popup: off
+  # sound: true
+
+# Keybind overrides: scope -> action -> key(s). A binding may be a single key
+# or a list; an empty list disables the action. Defaults shown commented.
+# Easier: ctrl+s -> "edit keybinds" edits these in-app with collision
+# detection and writes them back here.
+# keys:
+#   global:
+#     next_view: [tab, L]
+#     prev_view: [shift+tab, H]
+#     refresh: ctrl+r
+#     quit: [q, ctrl+c]
+#     help: "?"
+#     follow: l
+#     filter: f
+#     zoom: z
+#     config: ctrl+s
+#     preview_up: shift+up
+#     preview_down: shift+down
+#     preview_pgup: pgup
+#     preview_pgdn: pgdown
+#   list:
+#     up: [up, k]
+#     down: [down, j]
+#     top: [g, home]
+#     bottom: [G, end]
+#     half_up: ctrl+u
+#     half_down: ctrl+d
+#     quick_filter: /
+#     clear_filter: esc
+#   prs:
+#     open: enter
+#     copy_url: y
+#     diff: d
+#     comments: c
+#     review: r
+#     comment: C          # new top-level PR comment
+#     reply: R            # reply to the inline thread under the cursor
+#     resolve: X          # resolve/unresolve that thread
+#     next_thread: "]"
+#     prev_thread: "["
+#     sort: s
+#     reverse: S
+#     toggle_review: w
+#   sessions:
+#     resume: enter
+#     sort: s
+#     reverse: S
+#     agents: a
+#     delete: d
+#     expand: E
+#   linear:
+#     nav: ctrl+p
+#     mine: m             # only-mine toggle, project sources
+#     comments: c         # comments in the preview
+#     open: enter
+#     copy_url: y
+#     copy_branch: b
+#     sort: s
+#     reverse: S
+
 github:
-  # Search query for the PRs view, in GitHub search syntax. `is:pr` is added
-  # automatically. Examples:
-  #   author:@me is:open archived:false      (your open PRs — default)
-  #   org:my-org review-requested:@me         (PRs awaiting your review)
+  # enabled: true
+  # Search query for your own PRs, in GitHub search syntax. `is:pr` is added
+  # automatically.
   filter: "author:@me is:open archived:false"
+  # Search query for the "needs your review" section (toggle it with 'w').
+  review_filter: "review-requested:@me is:open archived:false"
+  # Show that section on startup. Off by default: the view opens with just
+  # your own PRs, as it always did.
+  show_review_requested: false
+  # Render diffs in the right pane on 'd'. Off by default: 'd' pages the
+  # diff through less, the original behavior. The comments pane ('c') and
+  # inline-thread annotations need this on to show threads in the diff.
+  diff_pane: false
 
 linear:
+  # enabled: true
   # Personal API key. Create one at:
   #   linear.app -> Settings -> Security & access -> API keys
   # Without it, the Linear view shows a setup hint instead of issues.
   token: ""
+  # Which issues to fetch (server-side). The default is your assigned issues
+  # that aren't completed or canceled, the same as Linear's "assigned" view.
+  filter:
+    # Which nav source to start on: "assigned" (My Issues, default) or
+    # "all" (All Issues). In-app the source is picked in the nav tree
+    # (ctrl+p); inside a project source, 'm' toggles only-mine.
+    scope: assigned
+    include_completed: false
+    include_canceled: false
+    # teams: [SRE]              # limit to these team keys
+    # projects: [Some Project]  # limit to these project names
+    # states: [In Progress]     # limit to these workflow states
+    # limit: 100
+  # Show the navigation tree (Inbox / My Issues / All Issues / pinned
+  # projects) on startup. ctrl+p toggles it in-app either way; left/right
+  # move between the tree and the list.
+  nav: false
+  # Render issue comments in the preview on startup ('c' toggles in-app).
+  show_comments: false
 
 sessions:
   # Set to false to hide the agent-sessions view.
