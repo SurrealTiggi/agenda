@@ -1,0 +1,23 @@
+name: release-drafter
+
+on:
+  push:
+    branches: [main]
+  # pull_request_target so fork PRs get autolabeled; the job runs only this
+  # trusted action and never checks out PR code.
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  update_release_draft:
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -58,3 +58,35 @@ func TestViewIndexForKey(t *testing.T) {
 		}
 	}
 }
+
+func TestPreviewHiddenGivesListFullWidth(t *testing.T) {
+	m := New(config.Default(), []View{&stubView{"PRs"}})
+	m.width, m.height, m.ready = 120, 40, true
+
+	listW, _, _ := m.dims()
+	if listW >= 120 {
+		t.Fatalf("baseline listW = %d, want < 120 (preview visible)", listW)
+	}
+
+	m.previewHidden = true
+	listW, _, _ = m.dims()
+	if listW != 120 {
+		t.Errorf("hidden listW = %d, want full width 120", listW)
+	}
+
+	// Zoom wins over hidden: the preview comes back at full width.
+	m.zoomed = true
+	listW, prevW, _ := m.dims()
+	if listW != 0 || prevW <= 0 {
+		t.Errorf("zoomed+hidden = (list %d, preview %d), want (0, >0)", listW, prevW)
+	}
+}
+
+func TestHidePreviewConfigSetsStartupState(t *testing.T) {
+	cfg := config.Default()
+	cfg.HidePreview = true
+	m := New(cfg, []View{&stubView{"PRs"}})
+	if !m.previewHidden {
+		t.Error("HidePreview config did not set previewHidden at startup")
+	}
+}

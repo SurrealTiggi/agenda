@@ -53,7 +53,8 @@ go install github.com/obliadp/agenda@latest
 ```
 
 `agenda` opens on the first tab; `agenda prs` / `agenda sessions` /
-`agenda linear` open straight on that view.
+`agenda linear` open straight on that view. `agenda version` prints the
+build's version.
 
 Requirements:
 - A **Nerd Font** in your terminal (for the status glyphs) — same as gh-dash.
@@ -89,6 +90,7 @@ the full keymap in-app.
 | Global | `j`/`k`, `g`/`G`, `ctrl+d`/`ctrl+u` | navigate list |
 | Global | `shift+↑`/`shift+↓`, `PgUp`/`PgDn` | scroll preview |
 | Global | `z` | zoom the preview pane to full width (tmux-style) |
+| Global | `v` | show/hide the preview pane (nav-only, for narrow terminals) |
 | Global | `l` | follow references — opens a picker of related items |
 | Global | `ctrl+s` | config overlay (theme, refresh, notifications, views…) |
 | Global | `ctrl+r` | refresh |
@@ -141,6 +143,9 @@ out of the box agenda looks and acts as it did before these options existed.
   notification (`popup: desktop`), optionally with a sound. Bodies summarize
   the new items (`repo#N: title (@author)`).
 - **Keybinds**: every action remappable per scope.
+- **Nav-only mode**: `v` hides the preview pane so the list takes the full
+  width — `z`'s counterpart, for narrow terminals; `hide_preview: true`
+  makes it the startup state.
 - **Swimlanes**: `grouping: true` renders every view's list as sections
   derived from the active sort: status lanes for Linear's status sort,
   repo/review/checks/size lanes for PRs, cwd/tool lanes for sessions, and

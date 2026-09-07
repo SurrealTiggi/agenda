@@ -16,6 +16,11 @@ views: [prs, sessions, linear]
 # buckets (e.g. sessions by msgs) stay flat. Off by default: flat lists.
 grouping: false
 
+# Start with the preview (detail) pane hidden so the list takes the full
+# width — friendlier to narrow terminals. The toggle_preview key (default
+# "v") shows/hides it at runtime either way. Off by default.
+hide_preview: false
+
 theme:
   # Built-in palette: default, catppuccin-mocha, catppuccin-latte, tokyonight,
   # gruvbox, dracula, nord, rose-pine. "default" uses your terminal's ANSI

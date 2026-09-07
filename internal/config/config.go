@@ -31,6 +31,11 @@ type Config struct {
 	// with no feasible grouping stay flat either way.
 	Grouping bool `yaml:"grouping"`
 
+	// HidePreview starts with the preview (detail) pane hidden, leaving the
+	// list full-width — friendlier to narrow terminals. Off by default; the
+	// toggle_preview key (default "v") flips it at runtime either way.
+	HidePreview bool `yaml:"hide_preview"`
+
 	// Keys overrides key bindings: scope -> action -> keys. Scopes are
 	// "global", "prs", "sessions", "linear"; actions and defaults are listed
 	// in config.example.yml. A binding may be a single key or a list.
