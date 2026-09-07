@@ -36,6 +36,9 @@ type Model struct {
 
 	// zoomed expands the preview pane to the full width (tmux-style zoom).
 	zoomed bool
+	// previewHidden drops the preview pane, giving the list the full width
+	// (the toggle_preview key flips it; hide_preview sets the startup state).
+	previewHidden bool
 
 	// preview scrolling, owned centrally so it works the same in every view.
 	previewScroll int
@@ -96,11 +99,12 @@ func (m Model) anyLoading() bool {
 // (main) and passed in, so the tui package doesn't import every view package.
 func New(cfg config.Config, views []View) Model {
 	return Model{
-		cfg:     cfg,
-		keys:    newKeys(cfg.Keys),
-		theme:   defaultTheme(),
-		views:   views,
-		refresh: refreshIntervals(cfg, views),
+		cfg:           cfg,
+		keys:          newKeys(cfg.Keys),
+		previewHidden: cfg.HidePreview,
+		theme:         defaultTheme(),
+		views:         views,
+		refresh:       refreshIntervals(cfg, views),
 	}
 }
 
@@ -340,6 +344,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.zoomed = !m.zoomed
 			m.layout() // preview width changed; views re-wrap their content
 			return m, nil
+		case key.Matches(msg, m.keys.TogglePreview):
+			m.previewHidden = !m.previewHidden
+			m.layout()
+			return m, nil
 		case key.Matches(msg, m.keys.Refresh):
 			// Init() flips the view back into its loading state. Only start a
 			// spinner loop if one isn't already running (i.e. nothing was loading).
@@ -520,6 +528,9 @@ func (m *Model) applyConfigChange(path string) tea.Cmd {
 		m.theme = defaultTheme()
 	case path == "grouping":
 		return groupingCmd(m.cfg.Grouping)
+	case path == "hide_preview":
+		m.previewHidden = m.cfg.HidePreview
+		m.layout()
 	case strings.HasPrefix(path, "refresh."):
 		m.refresh = refreshIntervals(m.cfg, m.views)
 		m.refreshGen++ // orphan the old tick loops
@@ -644,6 +655,8 @@ func (m Model) dims() (listW, previewContentW, contentH int) {
 	previewPane := m.width * previewRatio / 100
 	if m.zoomed {
 		previewPane = m.width
+	} else if m.previewHidden {
+		previewPane = 0 // nav-only: the list takes the full width
 	}
 	listW = m.width - previewPane
 	previewContentW = max(1, previewPane-3-scrollGutter)
@@ -683,6 +696,8 @@ func (m Model) View() tea.View {
 	var body string
 	if m.zoomed {
 		body = m.theme.previewZoomed.Height(contentH).Render(m.previewPane(cur, previewContentW, contentH))
+	} else if m.previewHidden {
+		body = clipFrom(cur.ListView(), 0, contentH)
 	} else {
 		body = lipgloss.JoinHorizontal(
 			lipgloss.Top,
@@ -944,9 +959,9 @@ func (m Model) helpView() string {
 	b.WriteByte('\n')
 	section("Global")
 	for _, bnd := range []key.Binding{
-		m.keys.Follow, m.keys.Filter, m.keys.Zoom, m.keys.NextView,
-		m.keys.PrevView, m.keys.PreviewUp, m.keys.Refresh, m.keys.Config,
-		m.keys.Quit,
+		m.keys.Follow, m.keys.Filter, m.keys.Zoom, m.keys.TogglePreview,
+		m.keys.NextView, m.keys.PrevView, m.keys.PreviewUp, m.keys.Refresh,
+		m.keys.Config, m.keys.Quit,
 	} {
 		if h := bnd.Help(); h.Key != "" {
 			line(h.Key, h.Desc)
@@ -1009,9 +1024,16 @@ func (m Model) renderFooter() string {
 		follow = append(follow, m.keys.Follow)
 	}
 
-	full := append(append(append([]key.Binding{}, view...), follow...),
-		m.keys.Filter, m.keys.Zoom, m.keys.NextView, m.keys.PreviewUp,
-		m.keys.Refresh, m.keys.Config, m.keys.Help, m.keys.Quit)
+	// Zooming an already-hidden preview makes no sense, so the zoom hint
+	// only shows while the preview is in view (v brings it back first).
+	pane := []key.Binding{m.keys.TogglePreview}
+	if !m.previewHidden {
+		pane = append(pane, m.keys.Zoom)
+	}
+	full := append(append(append(append([]key.Binding{}, view...), follow...),
+		m.keys.Filter), pane...)
+	full = append(full, m.keys.NextView, m.keys.PreviewUp, m.keys.Refresh,
+		m.keys.Config, m.keys.Help, m.keys.Quit)
 
 	status := m.views[m.current].Status()
 	left := m.footerLine(full)
@@ -1020,8 +1042,9 @@ func (m Model) renderFooter() string {
 		if len(compact) > 4 {
 			compact = compact[:4]
 		}
-		compact = append(append(append([]key.Binding{}, compact...), follow...),
-			m.keys.Filter, m.keys.Zoom, m.keys.Help, m.keys.Quit)
+		compact = append(append(append(append([]key.Binding{}, compact...), follow...),
+			m.keys.Filter), pane...)
+		compact = append(compact, m.keys.Help, m.keys.Quit)
 		left = m.footerLine(compact)
 	}
 
