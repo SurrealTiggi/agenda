@@ -22,6 +22,17 @@ import (
 // ANSI escape). glyphs and right may contain styling; their display width is
 // measured with lipgloss.Width.
 func TwoLineRow(width int, selected bool, glyphs, metaPlain, metaStyled, right, title string, hl Highlighter) string {
+	return twoLineRow(width, selected, glyphs, metaPlain, metaStyled, right, title, hl, false)
+}
+
+// TwoLineRowFaint is TwoLineRow with the title rendered faint — for rows the
+// user has already dealt with and should be able to skim past. The dim is
+// uniform even when selected: the accent bar alone marks the cursor.
+func TwoLineRowFaint(width int, selected bool, glyphs, metaPlain, metaStyled, right, title string, hl Highlighter) string {
+	return twoLineRow(width, selected, glyphs, metaPlain, metaStyled, right, title, hl, true)
+}
+
+func twoLineRow(width int, selected bool, glyphs, metaPlain, metaStyled, right, title string, hl Highlighter, faint bool) string {
 	bar := "  "
 	if selected {
 		bar = Accent.Render("▌") + " "
@@ -40,9 +51,12 @@ func TwoLineRow(width int, selected bool, glyphs, metaPlain, metaStyled, right, 
 
 	plainTitle := Truncate(title, max(1, width-indent))
 	t := hl.Highlight(plainTitle)
-	if selected {
+	switch {
+	case faint:
+		t = Faint.Render(t)
+	case selected:
 		t = Bold.Render(t)
-	} else {
+	default:
 		t = Text.Render(t)
 	}
 	line2 := bar + strings.Repeat(" ", indent-lipgloss.Width(bar)) + t

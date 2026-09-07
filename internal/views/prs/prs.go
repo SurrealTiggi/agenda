@@ -59,6 +59,13 @@ type pr struct {
 	Author         struct {
 		Login string `json:"login"`
 	} `json:"author"`
+	ViewerLatestReview struct {
+		State string `json:"state"`
+	} `json:"viewerLatestReview"`
+	// Reviewed marks a review-requested row the viewer has already reviewed
+	// (set at assembly when github.mark_reviewed is on): rendered dim with a
+	// "reviewed" tag so the eye can skip it.
+	Reviewed   bool `json:"-"`
 	Repository struct {
 		NameWithOwner string `json:"nameWithOwner"`
 	} `json:"repository"`
@@ -80,6 +87,17 @@ type pr struct {
 }
 
 func (p pr) repo() string { return p.Repository.NameWithOwner }
+
+// reviewedByMe reports whether the viewer's latest review still counts as
+// "handled": approved, changes requested, or commented. DISMISSED and PENDING
+// mean the ball is back with the viewer.
+func (p pr) reviewedByMe() bool {
+	switch p.ViewerLatestReview.State {
+	case "APPROVED", "CHANGES_REQUESTED", "COMMENTED":
+		return true
+	}
+	return false
+}
 
 func (p pr) ciState() string {
 	if len(p.Commits.Nodes) == 0 {
@@ -184,6 +202,21 @@ func (p pr) diffCell() string {
 		ui.Red.Render("-"+strconv.Itoa(p.Deletions))
 }
 
+// diffPlain / commentsPlain are the uncolored cell texts, for dim rows.
+func (p pr) diffPlain() string {
+	if p.Additions == 0 && p.Deletions == 0 {
+		return ""
+	}
+	return fmt.Sprintf("+%d -%d", p.Additions, p.Deletions)
+}
+
+func (p pr) commentsPlain() string {
+	if p.Comments.TotalCount == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s%d", ui.IconComment, p.Comments.TotalCount)
+}
+
 func (p pr) commentsCell() string {
 	if p.Comments.TotalCount == 0 {
 		return ""
@@ -223,6 +256,15 @@ func (p pr) Render(width int, selected bool, hl ui.Highlighter) string {
 	if p.HeadRefName != "" {
 		plain += " · " + p.HeadRefName
 		styled += ui.Dim.Render(" · " + p.HeadRefName)
+	}
+
+	// Already reviewed by you: tag the metadata and dim the whole row so the
+	// eye skims past it (glyphs keep their colors; status stays readable).
+	if p.Reviewed {
+		plain += " · reviewed"
+		styled = ui.Dim.Render(plain)
+		right = ui.Dim.Render(strings.TrimSpace(p.diffPlain() + "  " + p.commentsPlain() + "  " + ui.Age(p.UpdatedAt)))
+		return ui.TwoLineRowFaint(width, selected, glyphs, plain, styled, right, p.Title, hl)
 	}
 
 	return ui.TwoLineRow(width, selected, glyphs, plain, styled, right, p.Title, hl)
@@ -588,6 +630,7 @@ const graphqlQuery = `query($q: String!) {
 fragment prFields on PullRequest {
   number title url state isDraft updatedAt headRefName
   additions deletions mergeable reviewDecision body
+  viewerLatestReview { state }
   author { login }
   repository { nameWithOwner }
   comments { totalCount }
@@ -720,6 +763,14 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 			return nil
 		}
 		v.flash = ui.Green.Render("✓ " + msg.what)
+		// Optimistically record the review so the row dims the moment the
+		// popup closes; the refetch below confirms it.
+		for i := range v.reviewRaw {
+			if v.reviewRaw[i].URL == msg.url {
+				v.reviewRaw[i].ViewerLatestReview.State = msg.state
+			}
+		}
+		v.applySort()
 		return v.fetch() // pick up the new review decision
 	case commentsMsg:
 		if st, ok := v.comments[msg.url]; ok {
@@ -865,7 +916,11 @@ func (v *View) TakePreviewJump() (int, bool) {
 
 type reviewDoneMsg struct {
 	what string
-	err  error
+	url  string
+	// state is the ViewerLatestReview state the verdict implies, applied
+	// optimistically so the row dims before the refetch lands.
+	state string
+	err   error
 }
 
 // updateReview handles keys while the review popup is open: pick an option
@@ -1000,20 +1055,21 @@ func (v *View) submitReview(verdict string) tea.Cmd {
 	if strings.TrimSpace(r.body) != "" {
 		args = append(args, "--body", r.body)
 	}
-	var what string
+	var what, state string
 	switch verdict {
 	case "approve":
-		what = fmt.Sprintf("approved %s#%d", r.repo, r.num)
+		what, state = fmt.Sprintf("approved %s#%d", r.repo, r.num), "APPROVED"
 	case "comment":
-		what = fmt.Sprintf("commented on %s#%d", r.repo, r.num)
+		what, state = fmt.Sprintf("commented on %s#%d", r.repo, r.num), "COMMENTED"
 	default:
-		what = fmt.Sprintf("requested changes on %s#%d", r.repo, r.num)
+		what, state = fmt.Sprintf("requested changes on %s#%d", r.repo, r.num), "CHANGES_REQUESTED"
 	}
+	url := r.url
 	return func() tea.Msg {
 		if err := exec.Command("gh", args...).Run(); err != nil {
 			return reviewDoneMsg{err: cmdErr(err)}
 		}
-		return reviewDoneMsg{what: what}
+		return reviewDoneMsg{what: what, url: url, state: state}
 	}
 }
 
@@ -1200,7 +1256,13 @@ func (v *View) applySort() {
 			label += "  ·  fetch failed (ctrl+r)"
 		}
 		items = append(items, pr{Separator: label})
-		items = append(items, v.groupSection(sortPRs(v.reviewRaw, v.sort, v.rev))...)
+		rev := sortPRs(v.reviewRaw, v.sort, v.rev)
+		if v.cfg.MarkReviewed {
+			for i := range rev {
+				rev[i].Reviewed = rev[i].reviewedByMe()
+			}
+		}
+		items = append(items, v.groupSection(rev)...)
 	}
 	v.list.SetItems(items)
 }
