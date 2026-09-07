@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // TwoLineRow renders a list item as a two-line block, à la gh-dash's
@@ -44,7 +45,9 @@ func twoLineRow(width int, selected bool, glyphs, metaPlain, metaStyled, right, 
 	avail := max(1, width-indent-lipgloss.Width(right)-1)
 	meta := metaStyled
 	if lipgloss.Width(metaPlain) > avail {
-		meta = Dim.Render(Truncate(metaPlain, avail))
+		// Escape-aware truncation keeps the per-segment colors; a plain
+		// truncate would have to drop to a single dim style.
+		meta = ansi.Truncate(metaStyled, avail, "…")
 	}
 	gap := max(1, width-indent-lipgloss.Width(meta)-lipgloss.Width(right))
 	line1 := prefix + meta + strings.Repeat(" ", gap) + right
