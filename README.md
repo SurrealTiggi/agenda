@@ -53,7 +53,8 @@ go install github.com/obliadp/agenda@latest
 ```
 
 `agenda` opens on the first tab; `agenda prs` / `agenda sessions` /
-`agenda linear` open straight on that view.
+`agenda linear` open straight on that view. `agenda version` prints the
+build's version.
 
 Requirements:
 - A **Nerd Font** in your terminal (for the status glyphs) — same as gh-dash.

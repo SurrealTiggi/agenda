@@ -7,6 +7,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -22,6 +23,15 @@ import (
 )
 
 func main() {
+	// Before config load, so a broken config never blocks a version check.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "version", "--version", "-v":
+			fmt.Println("agenda", versionString())
+			return
+		}
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "agenda: config error:", err)
@@ -81,4 +91,54 @@ func main() {
 		fmt.Fprintln(os.Stderr, "agenda:", err)
 		os.Exit(1)
 	}
+}
+
+// Set by GoReleaser via -ldflags "-X main.version=..." on release builds.
+// go-install and source builds leave them empty and fall back to the
+// module/VCS metadata the Go toolchain embeds on its own.
+var (
+	version string
+	commit  string
+	date    string
+)
+
+func versionString() string {
+	if version != "" {
+		out := version
+		if commit != "" {
+			out += " (" + commit
+			if date != "" {
+				out += ", " + date
+			}
+			out += ")"
+		}
+		return out
+	}
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "devel"
+	}
+	if v := bi.Main.Version; v != "" && v != "(devel)" {
+		return v // go install: tag or pseudo-version resolved by the module proxy
+	}
+	var rev string
+	var dirty bool
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if rev == "" {
+		return "devel"
+	}
+	if len(rev) > 12 {
+		rev = rev[:12]
+	}
+	if dirty {
+		rev += "-dirty"
+	}
+	return "devel (" + rev + ")"
 }
