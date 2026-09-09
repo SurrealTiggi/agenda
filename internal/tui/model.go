@@ -205,6 +205,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case ui.RevealPreviewMsg:
+		if m.previewHidden {
+			m.previewHidden = false
+			m.layout()
+		}
+		return m, nil
 	case ui.ToastMsg:
 		m.toast = &msg
 		m.toastGen++

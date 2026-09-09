@@ -813,10 +813,10 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 			case !v.showComments:
 				v.showComments = true
 				v.jumpPending, v.commentsJumped = true, true
-				return v.maybeFetchComments()
+				return tea.Batch(ui.RevealPreview, v.maybeFetchComments())
 			case !v.commentsJumped:
 				v.jumpPending, v.commentsJumped = true, true
-				return nil
+				return ui.RevealPreview
 			default:
 				v.showComments = false
 				v.commentsJumped = false

@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/obliadp/agenda/internal/config"
+	"github.com/obliadp/agenda/internal/ui"
 )
 
 // stubView is the minimal View for chrome-level tests.
@@ -88,5 +89,17 @@ func TestHidePreviewConfigSetsStartupState(t *testing.T) {
 	m := New(cfg, []View{&stubView{"PRs"}})
 	if !m.previewHidden {
 		t.Error("HidePreview config did not set previewHidden at startup")
+	}
+}
+
+func TestRevealPreviewMsgUnhidesPreview(t *testing.T) {
+	cfg := config.Default()
+	cfg.HidePreview = true
+	m := New(cfg, []View{&stubView{"PRs"}})
+	m.width, m.height, m.ready = 120, 40, true
+
+	got, _ := m.Update(ui.RevealPreviewMsg{})
+	if got.(Model).previewHidden {
+		t.Error("previewHidden still true after RevealPreviewMsg")
 	}
 }

@@ -829,11 +829,9 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 		case key.Matches(msg, v.keys.Comments):
 			return v.setPane(paneComments)
 		case key.Matches(msg, v.keys.NextThread):
-			v.jumpThread(1)
-			return nil
+			return v.jumpThread(1)
 		case key.Matches(msg, v.keys.PrevThread):
-			v.jumpThread(-1)
-			return nil
+			return v.jumpThread(-1)
 		case key.Matches(msg, v.keys.Reply):
 			if t, ok := v.currentThread(); ok {
 				v.input = &threadFlow{kind: "reply", threadID: t.ID, target: t.Path + lineSuffix(t)}
@@ -889,18 +887,21 @@ func (v *View) setPane(mode paneMode) tea.Cmd {
 	}
 	v.pane = mode
 	v.annIdx = 0
-	return tea.Batch(v.maybeFetchDiff(), v.maybeFetchComments())
+	// The pane is about to show a diff or comments; a hidden preview would
+	// swallow it silently.
+	return tea.Batch(ui.RevealPreview, v.maybeFetchDiff(), v.maybeFetchComments())
 }
 
 // jumpThread moves between inline-thread anchors in the current pane and
 // asks the root model to scroll the preview there.
-func (v *View) jumpThread(d int) {
+func (v *View) jumpThread(d int) tea.Cmd {
 	if v.pane == paneBody || len(v.anchors) == 0 {
-		return
+		return nil
 	}
 	v.annIdx = (v.annIdx + d + len(v.anchors)) % len(v.anchors)
 	line := v.anchors[v.annIdx].Line + v.paneHeader
 	v.pendingJump = &line
+	return ui.RevealPreview
 }
 
 // TakePreviewJump implements the root model's preview-jump hook: it returns
@@ -990,7 +991,7 @@ func (v *View) activateReviewOption(label string) tea.Cmd {
 		v.review = nil
 		if v.cfg.DiffPane {
 			v.pane = paneDiff
-			return tea.Batch(v.maybeFetchDiff(), v.maybeFetchComments())
+			return tea.Batch(ui.RevealPreview, v.maybeFetchDiff(), v.maybeFetchComments())
 		}
 		return v.diffInPager()
 	case "Cancel":
