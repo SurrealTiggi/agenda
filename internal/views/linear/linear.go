@@ -795,11 +795,16 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 			v.navFocus = true
 			return nil
 		}
+		before := v.list.Selected().Identifier
 		if consumed, cmd := v.list.Update(msg); consumed {
 			// Selection may have moved with the comments section showing:
 			// fetch the newly-selected issue's comments if uncached, and
 			// restart the 'c' jump cycle.
 			v.commentsJumped = false
+			if v.list.Selected().Identifier != before {
+				// Moving on ends a transient preview reveal.
+				return tea.Batch(cmd, v.maybeFetchComments(), ui.ConcealPreview)
+			}
 			return tea.Batch(cmd, v.maybeFetchComments())
 		}
 		if v.list.Filtering() {

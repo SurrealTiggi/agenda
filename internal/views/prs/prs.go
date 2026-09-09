@@ -771,7 +771,8 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 			}
 		}
 		v.applySort()
-		return v.fetch() // pick up the new review decision
+		// Review submitted: done looking, so a transient reveal folds away.
+		return tea.Batch(ui.ConcealPreview, v.fetch())
 	case commentsMsg:
 		if st, ok := v.comments[msg.url]; ok {
 			st.data, st.err, st.done = msg.data, msg.err, true
@@ -804,11 +805,16 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 		if v.input != nil {
 			return v.updateThreadInput(msg)
 		}
+		before := v.list.Selected().URL
 		if consumed, cmd := v.list.Update(msg); consumed {
 			// Selection may have moved while a data pane is showing; fetch
 			// for the new selection only once it settles, so holding j/k
 			// doesn't spawn a gh call per row scrolled past.
 			v.annIdx = 0
+			if v.list.Selected().URL != before {
+				// Moving on ends a transient preview reveal.
+				return tea.Batch(cmd, v.scheduleSettle(), ui.ConcealPreview)
+			}
 			return tea.Batch(cmd, v.scheduleSettle())
 		}
 		if v.list.Filtering() {
@@ -883,7 +889,7 @@ func (v *View) Update(msg tea.Msg) tea.Cmd {
 func (v *View) setPane(mode paneMode) tea.Cmd {
 	if v.pane == mode {
 		v.pane = paneBody
-		return nil
+		return ui.ConcealPreview
 	}
 	v.pane = mode
 	v.annIdx = 0

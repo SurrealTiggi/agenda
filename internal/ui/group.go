@@ -87,3 +87,12 @@ type RevealPreviewMsg struct{}
 
 // RevealPreview is the tea.Cmd form of RevealPreviewMsg.
 func RevealPreview() tea.Msg { return RevealPreviewMsg{} }
+
+// ConcealPreviewMsg returns a transiently-revealed preview (see
+// RevealPreviewMsg) to its hidden state: the selection moved on, or the
+// action that needed the pane finished. A no-op when the user showed the
+// pane deliberately.
+type ConcealPreviewMsg struct{}
+
+// ConcealPreview is the tea.Cmd form of ConcealPreviewMsg.
+func ConcealPreview() tea.Msg { return ConcealPreviewMsg{} }

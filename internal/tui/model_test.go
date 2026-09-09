@@ -103,3 +103,34 @@ func TestRevealPreviewMsgUnhidesPreview(t *testing.T) {
 		t.Error("previewHidden still true after RevealPreviewMsg")
 	}
 }
+
+func TestTransientRevealConcealsOnMsg(t *testing.T) {
+	cfg := config.Default()
+	cfg.HidePreview = true
+	m := New(cfg, []View{&stubView{"PRs"}})
+	m.width, m.height, m.ready = 120, 40, true
+
+	got, _ := m.Update(ui.RevealPreviewMsg{})
+	m = got.(Model)
+	if m.previewHidden || !m.previewTransient {
+		t.Fatalf("after reveal: hidden=%v transient=%v, want false/true", m.previewHidden, m.previewTransient)
+	}
+	got, _ = m.Update(ui.ConcealPreviewMsg{})
+	m = got.(Model)
+	if !m.previewHidden || m.previewTransient {
+		t.Errorf("after conceal: hidden=%v transient=%v, want true/false", m.previewHidden, m.previewTransient)
+	}
+}
+
+func TestConcealIgnoredForDeliberateShow(t *testing.T) {
+	// Preview visible because the user wants it visible (default config):
+	// a conceal from a view must not hide it.
+	m := New(config.Default(), []View{&stubView{"PRs"}})
+	m.width, m.height, m.ready = 120, 40, true
+
+	got, _ := m.Update(ui.ConcealPreviewMsg{})
+	m = got.(Model)
+	if m.previewHidden {
+		t.Error("conceal hid a deliberately-visible preview")
+	}
+}
